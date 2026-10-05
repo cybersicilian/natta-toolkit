@@ -1,0 +1,19 @@
+# Optional System One configuration for natta route/execute/plan/do.
+# Copy to ~/.config/natta/system_one.toml and keep only what you change.
+# Environment variables (NATTA_SYSTEM_ONE_*, NATTA_JEV_MODEL, NATTA_OLLAMA_*) override it.
+schema_version = 1
+backend = "jev"            # "jev" (TypeSafe, default) or "ollama"
+min_confidence = 0.5       # answers below this, or without confidence, never execute
+
+[jev]
+model = "jev-latest"       # pin a version such as "jev-1.13.0" once you tune thresholds
+api_key_env = "TYPESAFE_API_KEY"   # name of the variable holding the key; never the key itself
+timeout_seconds = 30
+max_retries = 2            # only for HTTP 429/529
+
+[ollama]
+host = "http://127.0.0.1:11434"
+model = "nimble"
+timeout_seconds = 120
+disable_thinking = true
+top_logprobs = 20          # Ollama must return logprobs, or nothing passes min_confidence

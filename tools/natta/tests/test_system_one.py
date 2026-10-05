@@ -57,6 +57,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual((config.backend, config.model, config.ollama.host), ('ollama', 'llama3.2:3b', 'http://gpu-box:11434'))
         self.assertEqual(config.min_confidence, 0.7)
 
+    def test_shipped_example_config_is_valid(self):
+        example = Path(__file__).resolve().parents[3] / 'examples/system_one.toml'
+        config = s1.load_config(environ={'NATTA_SYSTEM_ONE_CONFIG': str(example)})
+        self.assertEqual((config.backend, config.min_confidence, config.ollama.model), ('jev', 0.5, 'nimble'))
+
     def test_env_overrides_file(self):
         config = self.load('backend = "ollama"\n', NATTA_SYSTEM_ONE_BACKEND='jev', NATTA_JEV_MODEL='jev-1.13.0',
                            NATTA_SYSTEM_ONE_MIN_CONFIDENCE='0.8')

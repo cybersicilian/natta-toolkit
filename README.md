@@ -84,6 +84,41 @@ desired. Keep this wrapper in the checkout; copying it elsewhere changes its
 relative source resolution. There is no installer, shell dependency, global
 Python installation, automatic dependency repair or dependency on another checkout.
 
+## Set up semantic commands (optional)
+
+Direct commands need no AI. `route`, `execute`, `plan` and `do` need a System One
+backend. Pick one.
+
+**TypeSafe Jev (default).** Get an API key from [TypeSafe](https://docs.typesafe.ai)
+and put it in the environment of the shell that runs `natta`. Natta reads only the
+variable; it never stores or prints the key.
+
+```sh
+export TYPESAFE_API_KEY="..."        # or load it from your secret manager, e.g.
+export TYPESAFE_API_KEY="$(gcloud secrets versions access latest --secret=typesafe-api-key)"
+natta doctor                          # "TypeSafe API key present" (no request is made)
+natta route --json "Verify Example App at level 1"   # one billed request, never executes
+```
+
+**Ollama (local).** Install [Ollama](https://ollama.com), pull a model, and select
+it. Your Ollama server must return `logprobs` (0.35.1 does); without them no
+answer has a confidence and nothing passes the gate.
+
+```sh
+ollama pull nimble
+export NATTA_SYSTEM_ONE_BACKEND=ollama NATTA_OLLAMA_MODEL=nimble
+natta doctor                          # "Ollama reachable" and "model nimble installed"
+natta route --json "Verify Example App at level 1"
+```
+
+To keep the choice, copy [`examples/system_one.toml`](examples/system_one.toml) to
+`~/.config/natta/system_one.toml`. Unknown keys or values fail closed. Check the
+`confidence`, `probabilities` and `reason` fields of `--json` output; a
+`reason` of `low_confidence` means the answer was below `min_confidence` and
+nothing would execute. Semantic `status`/`context`/`diff` additionally need a
+one-time `natta confinement validate` (see [confinement](tools/natta/docs/MACOS_CONFINEMENT.md)).
+Full options: [System One configuration](tools/natta/docs/ROUTING.md#system-one-provider).
+
 ## Configuration and project registry
 
 User configuration defaults to `~/.config/natta/projects.toml`. The global
