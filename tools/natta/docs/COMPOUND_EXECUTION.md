@@ -17,7 +17,7 @@ natta do --json "Build Example, then test it"
 
 ## Architecture and frozen authorization unit
 
-`compound_execution.run` calls the current planner-v3 once, yielding the existing
+`compound_execution.run` calls the current System One planner (`system-one-planner-v1`) once, yielding the existing
 frozen PlanResult/Step objects. The allowed domain remains status/context/diff/
 build/test/verify/commit/testflight, with one to four linear ordered steps. It locally checks
 the complete plan with the existing planner validator and shared semantic
@@ -84,7 +84,7 @@ PASS/FAIL/SKIPPED rows, commit hash when present and final status.
 
 ## Local acceptance sequence
 
-Run on the host; these are real Luna requests and B/C can run real workflows.
+Run on the host; these are real System One requests and B/C can run real workflows.
 Check each displayed plan before answering. Start without commit:
 
 ```sh
@@ -106,7 +106,7 @@ natta do "Check Example, build it, test it, then commit it"
 
 Review the displayed complete plan. Type yes only if you intend its final local
 commit of **all** current Example changes. Earlier failures prevent commit. This
-acceptance has not been run from Codex.
+acceptance has not been run during development.
 
 Deferred: push/deploy, arbitrary shell/Git, custom semantic or AI commit messages,
 branching/loops/parallelism, retries/replanning/rollback, plan editing, more than

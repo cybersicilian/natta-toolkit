@@ -50,9 +50,9 @@ implement that tool's behavior.
 | `testflight PROJECT --check` | Local-only readiness inspection |
 | `testflight PROJECT [--confirm]` | Authorized signed archive/export and beta upload |
 | `codex [PROJECT]` | Interactive Codex handoff at checkout root or registered repository |
-| `route REQUEST` | One bounded semantic capability selection; no execution |
+| `route REQUEST` | One bounded System One capability selection; no execution |
 | `execute [--confirm] REQUEST` | One validated semantic dispatch |
-| `plan GOAL` | At most four linear intents, one provider call; no execution |
+| `plan GOAL` | At most four linear intents, one System One call; no execution |
 | `do [--confirm] GOAL` | Authorize a frozen plan, then sequential fail-fast dispatch |
 | `confinement validate` | Explicit local inspection-backend validation with disposable fixtures |
 
@@ -127,11 +127,21 @@ natta plan --json "Inspect Example App and then verify it at level 1"
 natta execute --confirm "Verify Example App at level 1"
 ```
 
-Semantic commands use the existing Codex CLI provider boundary with explicit
-`gpt-6-luna`. Model access and CLI protocol compatibility are required; there is
-no provider fallback or retry. Requests and frozen bounded descriptions are
-supplied to selection; planning also receives bounded project identity/aliases,
-not arbitrary project files. Project/verify parameters are resolved locally.
+Semantic commands ask **System One** questions: typed Choice judgments with
+calibrated confidence, instead of a generative model used as a classifier.
+Routing is one Choice over the capability IDs plus `no_match`. Planning is one
+batched call that asks for scope, up to four ordered steps (or `stop`) and each
+step's registered project. Project and verify parameters are resolved locally.
+The default backend is [TypeSafe Jev](https://docs.typesafe.ai). Set
+`TYPESAFE_API_KEY`, or select an Ollama-hosted model with
+`NATTA_SYSTEM_ONE_BACKEND=ollama NATTA_OLLAMA_MODEL=<model>`. There is no
+fallback between backends. An answer below `min_confidence` (default 0.5), or
+one with no confidence, is a non-executing `no_match` with
+`reason=low_confidence`. See the [System One configuration](tools/natta/docs/ROUTING.md#system-one-provider).
+
+Request or goal text, capability descriptions and (for planning) project IDs,
+aliases and display names are sent to TypeSafe over HTTPS, or to your configured
+Ollama host. Repository paths, contents and diffs are never sent.
 Natural-language wording never authorizes execution. Explicit policies require
 invocation-local `--confirm` or affirmative terminal approval; JSON/non-TTY never
 prompt. `do` authorizes the entire frozen plan before any prefix and reuses the
@@ -163,12 +173,13 @@ claiming universal JSON support. Programmer exceptions remain exceptions.
 substitute. [Result contracts](tools/natta/docs/RESULT_CONTRACT.md) define details.
 
 `doctor --json` exposes `core_ready`, required Check-shaped rows and optional
-provider/runtime/confinement/TestFlight rows. Missing optional components do not
+System One/runtime/confinement/TestFlight rows (backend, model, API-key presence
+never value, Ollama reachability). Missing optional components do not
 fail core readiness. Doctor performs no model inference, build, signing or upload.
 
 Workflow `--verbose` streams diagnostic output; `--log` explicitly retains logs
 under `~/Library/Logs/NattaToolkit/`. Default temporary execution state is removed
-on normal completion. Provider artifacts, local models and validation records use
+on normal completion. Local models and validation records use
 `~/Library/Application Support/NattaToolkit/`, separate from other installations.
 No credentials belong in the registry. TestFlight credentials remain external.
 
@@ -180,9 +191,9 @@ cannot become an arbitrary executable command through these routing contracts.
 Protected-state snapshots detect observable violations and fail closed; they do
 not roll back changes or prove the absence of network effects.
 
-The provider process is **not independently sandboxed by Natta** from reading the
-host. It may inherit host environment/process access according to its runtime.
-Restricted supplied context is not OS-enforced confidentiality. Not every
+Semantic commands send bounded context to an external System One service (or
+your Ollama host); restricted supplied context is not OS-enforced
+confidentiality, and request text is sent as typed. Not every
 deterministic workflow is sandboxed; trusted Xcode build phases/tests and other
 third-party code can have ordinary host filesystem/network effects. Arbitrary
 scripts are not inherently safe. See [the complete trust model](docs/SECURITY.md).
@@ -196,7 +207,7 @@ and not advertised as supported.
 
 The optional [isolated local-model research component](tools/natta-local-model/README.md)
 returns bounded decisions as data and includes reproducible evaluation code.
-It is experimental and does **not** replace the production semantic provider.
+It is experimental and does **not** replace the production System One provider.
 Evaluated Qwen/OpenJEV selection quality was rejected for production routing.
 No weights, downloaded caches, environments or external source projects are
 redistributed. Setup/download are explicit optional actions.
@@ -208,9 +219,12 @@ cd tools/natta
 python3 -B -m unittest discover -s tests -v
 ```
 
-The complete 447-test regression suite uses temporary repositories and mocked
-providers/Apple commands. Historical-evidence-dependent tests now construct
-synthetic comparison data; no safety test was removed. Sanitized evaluation inputs
+The complete 414-test regression suite uses temporary repositories and mocked
+System One answers/Apple commands, with no network access. Removing the Codex
+provider removed its transport and evaluator tests; no execution-safety test
+was removed. If your global Git config defines external filters (for example
+git-lfs), commit tests fail closed on purpose; run them with a clean `HOME`
+containing only a test `user.name`/`user.email`. Sanitized evaluation inputs
 have public control hashes and are not represented as newly measured benchmarks.
 See [evaluation provenance](docs/EVALUATION.md).
 

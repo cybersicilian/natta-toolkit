@@ -125,20 +125,20 @@ comparison during acceptance is extra local evidence, not remote-server proof.
 
 Historical Phase 4D corpora/descriptions/canonical/stability/Qwen/OpenJEV results
 and accepted planner-v1 corpus, controls and results remain byte-identical.
-router_codex retains the historical ROUTING_IDS domain for its old evaluator;
-PRODUCTION_IDS adds commit. Original descriptions stay in config/routing.json;
+The removed router_codex kept the historical ROUTING_IDS domain for its old
+evaluator; PRODUCTION_IDS (now in semantic_catalog) adds commit. Original descriptions stay in config/routing.json;
 the additive config/routing-commit-v2.json defines only the new capability.
 Historical prompt/schema domains remain separate. Public corpora are sanitized
 and their control hashes regenerated; private result artifacts are excluded.
 
-planner_provider_v2 adds commit through phase8a-commit-v2 and reuses the existing
-isolated planner transport. Its separate policy rejects whole goals containing
+The removed planner_provider_v2 added commit through phase8a-commit-v2 on the old
+Codex planner transport. Its separate policy rejected whole goals containing
 push, custom messages, arbitrary Git flags, shell or unsupported mutation. Plans
 remain max4, ordered, non-executing. Commit contributes explicit authorization,
 Git effects, no native confinement and mandatory future runtime verification.
 Source v1 planning evaluation covered its six-step-capability universe;
-it does not prove commit planning. The historical v1 evaluator remains usable
-with its original controls/provider mode.
+it does not prove commit planning. The historical v1 evaluator was removed with
+the Codex provider.
 
 New frozen evidence:
 
@@ -164,17 +164,14 @@ Their private result artifacts are excluded. Stale original routing controls sti
 reject revised provider inputs; current r2 controls and planner-v2 definitions
 remain checked. See [evaluation provenance](../../../docs/EVALUATION.md).
 
-Planner-only host command (20 requests, planning only):
-
-```sh
-cd tools/natta
-python3 -B commit_evaluation.py planner --allow-external-requests 20 \
-  --output "$PWD/evaluation/commit-planner-luna-v2.json"
-```
+The Codex-specific runners (commit_evaluation.py, planner_evaluation.py) were
+removed with the provider. These frozen public corpora/controls remain
+byte-identical as historical inputs; their controls hash old Codex prompts and
+are not System One evidence. No System One evaluator ships yet.
 
 ## Host acceptance — disposable first
 
-This zero-Luna procedure creates only a temporary Git fixture, proves default and
+This zero-provider-call procedure creates only a temporary Git fixture, proves default and
 custom commit messages, mixed changes, clean no_changes, verification and cleanup:
 
 ```sh
@@ -187,7 +184,7 @@ passes, knowingly choose ONE real project whose ALL current changes you want
 committed. Do not choose merely because it is dirty. Review diffs yourself first;
 Natta performs no content review. This example selects Example; substitute sample if
 that is the intended project. Review takes a protected snapshot, prints Git status,
-runs the semantic command without --confirm (one Luna request), proves denial and
+runs the semantic command without --confirm (one System One request), proves denial and
 unchanged protected state, and writes one private external review record:
 
 ```sh
@@ -197,7 +194,7 @@ python3 -B commit_acceptance.py review "$natta_commit_project" \
 ```
 
 Stop here and inspect the displayed changes/default message. Only if you want
-that ONE real commit, run the separate explicitly authorized step (one more Luna
+that ONE real commit, run the separate explicitly authorized step (one more System One
 request). It refuses if protected state changed since review, invokes semantic
 execute --confirm, checks parent/hash/message/identity/effects and local remote
 tracking refs, and never pushes or undoes the commit:
@@ -207,12 +204,12 @@ python3 -B commit_acceptance.py confirm \
   --state "$PWD/evaluation/commit-host-review.json" --confirm-real-project
 ```
 
-No real app commits or Luna requests are run during development. Push, partial
+No real app commits or System One requests are run during development. Push, partial
 staging, amend/revert/reset/checkout, AI messages, semantic custom messages
 and submodule workflows remain future work. Bounded compound execution/natta do
 is implemented separately and reuses the commit handler and verification.
 
 Interactive semantic authorization is terminal-only and continues the same frozen
-resolved action without a second Luna call. --json/non-TTY never prompt; --confirm
+resolved action without a second System One call. --json/non-TTY never prompt; --confirm
 preauthorizes one invocation. Direct commands stay noninteractive. See
 [authorization contract](EXECUTION_GATE.md#interactive-authorization).

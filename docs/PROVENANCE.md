@@ -26,9 +26,10 @@ packages. Review upstream notices when installing or redistributing dependencies
 | PyTorch | [Upstream license](https://github.com/pytorch/pytorch/blob/main/LICENSE), BSD-style with bundled notices | Optional dependency, not vendored |
 | Transformers | [Upstream license](https://github.com/huggingface/transformers/blob/main/LICENSE), Apache-2.0 | Optional dependency, not vendored |
 | huggingface-hub | [Upstream license](https://github.com/huggingface/huggingface_hub/blob/main/LICENSE), Apache-2.0 | Optional dependency, not vendored |
-| Python / Git / uv / Codex / Xcode | Separately installed tools with their own terms | No tool binaries or authentication redistributed |
+| Python / Git / uv / Codex / Ollama / Xcode | Separately installed tools with their own terms | No tool binaries or authentication redistributed |
 
 The upstream license verification status is recorded in the local review report.
 The lock's transitive dependencies remain upstream-owned and retain their respective
-licenses. Codex CLI/provider services and Apple/Xcode tools and services remain
+licenses. The TypeSafe System One service, an optional Ollama host, the optional
+Codex CLI (`natta codex` handoff) and Apple/Xcode tools and services remain
 subject to their respective terms; Natta Toolkit grants no rights over them.

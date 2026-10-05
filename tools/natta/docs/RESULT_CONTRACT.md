@@ -136,7 +136,13 @@ default or as one stable JSON object with these fields:
 |---|---|
 | status | matched, no_match, provider_error, routing_error, invalid_request |
 | capability | A validated supplied capability; no_match sentinel; null on failure |
-| provider | Always gpt-6-luna |
+| provider | Always system-one |
+| backend | jev or ollama; null if System One configuration could not be loaded |
+| model | Configured model, or the versioned model ID Jev reported; null without configuration |
+| min_confidence | Threshold applied to this route; null without configuration |
+| confidence | Confidence of the answer (0–1), or null when unavailable or no answer was obtained |
+| probabilities | Object mapping every option ID to its probability, or null |
+| reason | null, or low_confidence when the answer missed the threshold or had no confidence |
 | executed | Always false; fixed field, not provider supplied |
 | project | Registry canonical alias, or null; locally resolved |
 | arguments | Object containing validated bounded parameters; currently only verify level |
@@ -147,19 +153,21 @@ default or as one stable JSON object with these fields:
 | execution_policy | Immutable local PolicyResult exported as the object below |
 
 ```json
-{"status":"matched","capability":"verify","project":"sample","arguments":{"level":2},"arguments_resolved":true,"missing_arguments":[],"resolution_error":null,"provider":"gpt-6-luna","executed":false,"error":null}
+{"status":"matched","capability":"verify","project":"sample","arguments":{"level":2},"arguments_resolved":true,"missing_arguments":[],"resolution_error":null,"provider":"system-one","backend":"jev","model":"jev-1.13.0","min_confidence":0.5,"confidence":0.97,"probabilities":{"verify":0.973,"build":0.004,"...":"..."},"reason":null,"executed":false,"error":null}
 ```
 
 Matched and no_match exit zero. provider_error/routing_error/invalid_request exit
-one; parser usage errors exit two. Provider errors include provider_failure,
-provider_timeout, provider_unavailable, malformed_output, unknown_choice and
-boundary_violation. Local failures use workspace_or_definitions_invalid or
-unsupported_cli or parameter_configuration_invalid; empty text uses empty_request. Missing authentication, rate
-limits and nonzero provider exit are provider_failure without leaking stderr.
-No reasoning, confidence, raw prompts, requests, provider JSONL or provider
-arguments enter this result. It grants no execution authority and `natta route` never
+one; parser usage errors exit two. Provider errors are credentials_missing,
+provider_unavailable, provider_timeout, rate_limited, overloaded, provider_failure
+(other HTTP rejections), malformed_output and unknown_choice. Local failures use
+provider_configuration_invalid, definitions_invalid or
+parameter_configuration_invalid; empty text uses empty_request. Raw provider
+messages are never copied. A low-confidence answer is not an error: it is
+no_match with reason=low_confidence, exit zero, and keeps its confidence and
+probabilities. No raw prompts, requests, response bodies or credentials enter
+this result. It grants no execution authority and `natta route` never
 passes it to a dispatcher. The execute command constructs its own internal route. Project and bounded verify level are resolved deterministically after capability
-validation, never supplied by Luna. Internally arguments and missing values use
+validation, never supplied by System One. Internally arguments and missing values use
 immutable tuples; JSON exports a fresh object/array. Matched incomplete routes
 still exit zero: consumers must inspect arguments_resolved and resolution_error.
 Missing level yields missing_arguments=["level"], arguments={}, error=null.
@@ -264,7 +272,7 @@ Historical provider domains remain separate; public definitions have sanitized
 project names/control hashes and private results are excluded. See [COMMIT.md](COMMIT.md).
 
 Interactive semantic authorization is terminal-only and continues the same frozen
-resolved action without a second Luna call. --json/non-TTY never prompt; --confirm
+resolved action without a second System One call. --json/non-TTY never prompt; --confirm
 preauthorizes one invocation. Direct commands stay noninteractive. See
 [authorization contract](EXECUTION_GATE.md#interactive-authorization).
 
@@ -292,7 +300,8 @@ error=invalid_arguments, executed=false and exit 2. Human argparse diagnostics r
 
 Doctor --json reports status=passed/failed, core_ready, error and Check-shaped
 checks with name/status/optional. Mandatory failures determine exit 1; otherwise
-exit 0. Missing Codex, semantic readiness, local models, native confinement and
+exit 0. Missing System One credentials or Ollama, semantic readiness, the Codex CLI
+for `natta codex`, local models, native confinement and
 TestFlight prerequisites remain visible optional unavailable checks, not passed
 checks and not proof those capabilities work. Human output labels mandatory FAIL,
 optional UNAVAILABLE and the core readiness summary. Invalid registry/configuration

@@ -14,17 +14,30 @@ The POSIX `bin/natta` wrapper requires `sh`, `dirname`, and `python3` on PATH.
 Its source paths resolve within this checkout. No dotfiles, shell aliases or global
 site-package installation is required.
 
-## Optional semantic provider/interface
+## Optional semantic provider
 
-An installed/authenticated Codex CLI and access to explicit `gpt-6-luna` are needed
-for route/execute/plan/do; the interactive `codex` interface requires the CLI.
-The source protocol tests use `codex-cli 0.160.0`. The runtime probes required flags
-and feature compatibility (including `--no-daemon`, `--ignore-user-config`,
-`--ignore-rules`, `--strict-config`, `--ephemeral`, `--output-schema`, JSON events
-and host-skill-discovery control). A different CLI or unavailable model fails
-closed; mere executable presence is insufficient. No compatibility claim is made
-for every released Codex version. Runtime probes use local help/version/features,
-not a model request. Provider authentication is managed externally.
+`route`, `execute`, `plan` and `do` use a System One provider through the Python
+standard library (`urllib`); no SDK or package is installed.
+
+- **TypeSafe Jev (default):** network access to `https://api.typesafe.ai` and a
+  TypeSafe API key in `TYPESAFE_API_KEY`. Calls are billed per input token by
+  TypeSafe. `jev-latest` is an alias that can move to a new model version; pin a
+  versioned ID (for example `NATTA_JEV_MODEL=jev-1.13.0`) if you tune thresholds.
+- **Ollama (opt-in):** a running Ollama server and a pulled model, selected with
+  `NATTA_SYSTEM_ONE_BACKEND=ollama` and `NATTA_OLLAMA_MODEL`. The server must
+  return `logprobs` for `/api/chat`, or no answer has a confidence and nothing
+  passes the confidence gate. No minimum Ollama version is claimed; check with a
+  smoke request.
+
+Configuration is optional: `~/.config/natta/system_one.toml` and `NATTA_SYSTEM_ONE_*`
+environment overrides, both validated strictly. See
+[the routing contract](../tools/natta/docs/ROUTING.md#system-one-provider).
+Doctor reports configuration, key presence and Ollama reachability without
+inference. Missing credentials or an unreachable backend fail closed and leave
+direct commands usable.
+
+The separate `natta codex` command launches an installed Codex CLI as an
+interactive terminal handoff. It is not a semantic provider.
 
 ## macOS, Xcode and Apple
 

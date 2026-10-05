@@ -1,11 +1,33 @@
 # Implemented trust model
 
 Natta v1 uses explicit capabilities, not arbitrary command generation. The
-semantic selector/planner proposes bounded untrusted data; strict whole-response
-JSON and CLI event validation reject unknown fields, duplicate keys, malformed
-outputs, action events and unknown choices. Model output has no supported
-arbitrary-command execution path. Restricted supplied context excludes repository
-contents and authentication material. Planning supplies bounded project identity.
+semantic selector/planner asks System One Choice questions whose options Natta
+supplies; an answer is only one option ID from that set, plus probabilities and a
+confidence. Strict response validation rejects unknown or missing questions,
+choices outside the option set, duplicate keys, malformed probabilities and
+unexpected response shapes. Model output has no supported arbitrary-command,
+path, flag or argument path. Answers below `min_confidence` (default 0.5), or
+without any confidence, become a non-executing `no_match` (`low_confidence`).
+
+## What leaves the machine
+
+Semantic commands (`route`, `execute`, `plan`, `do`) send data to the configured
+System One backend; direct commands send nothing.
+
+- **TypeSafe Jev (default):** HTTPS `POST https://api.typesafe.ai/v1/systemone`
+  with a bearer key read from `TYPESAFE_API_KEY`. TypeSafe receives the
+  natural-language request or goal, Natta's fixed instructions, the routing/planner
+  capability descriptions and, for planning, registered project IDs, aliases and
+  display names. TypeSafe's own data handling applies; see
+  [its legal documentation](https://docs.typesafe.ai/legal).
+- **Ollama (opt-in):** the same questions go to the configured Ollama host over
+  HTTP. The default `http://127.0.0.1:11434` stays local; a remote host receives
+  the same content, unencrypted unless you configure an `https://` host.
+
+Natta never sends repository paths or contents, diffs, documents, registry paths,
+environment values or credentials other than the TypeSafe bearer key. The key is
+never written to a file, printed or included in results. There is no fallback
+between backends and no retry beyond bounded Jev HTTP 429/529 backoff.
 
 Before semantic dispatch, Natta validates CLI/catalog/parameter/binding/policy
 parity, resolves project/arguments deterministically, revalidates identity and
@@ -32,10 +54,11 @@ Verification failure or unavailable required protection is not reported as succe
 
 ## Non-guarantees
 
-- Natta does not independently sandbox the provider process from reading the host.
-  It can inherit host-level environment/process access according to its runtime.
+- Request/goal text is sent as typed. If it contains secrets or private names, the
+  configured backend receives them. Natta does not redact request text.
+- Natta does not authenticate the Ollama host beyond the URL you configure, and
+  calibrated confidence is a statistic, not proof that a selection is correct.
 - Bounded intentionally supplied context is not OS-enforced confidentiality.
-  Codex flags and disabled features are protocol controls, not a new isolation system.
 - Trusted Xcode phases/tests and other third-party code can write elsewhere or use
   network/external services. Policy-denied effects are not all actively prevented.
 - Arbitrary third-party scripts are not safe by default. Registry shell code is not

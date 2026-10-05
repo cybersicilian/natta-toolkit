@@ -4,7 +4,7 @@
 
 # Protected observable runtime effects
 
-The production execute chain is Luna selection → local resolution → local policy →
+The production execute chain is System One selection → local resolution → local policy →
 authorization → protected BEFORE capture → bound handler → protected AFTER capture
 → policy-driven effect comparison → final result. Route never invokes the verifier.
 A policy declaration is not runtime proof. This layer supplies evidence only for
@@ -106,7 +106,7 @@ violations or verification unavailability even when the handler returned zero.
 Executed still aliases execution_started. Exceptions still attempt AFTER capture.
 Interrupt/forced process termination may prevent a final envelope; no success is
 fabricated. Authorization-required/no_match/unresolved/provider-error paths take
-no runtime snapshots. Exactly one Luna classification remains; verifier makes zero
+no runtime snapshots. Exactly one System One classification remains; verifier makes zero
 provider calls. Doctor checks helper/effect-map integrity without snapshots, handler
 invocation or provider requests.
 

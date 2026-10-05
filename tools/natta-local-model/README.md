@@ -42,11 +42,12 @@ Fresh research commands, after explicit setup:
 ```sh
 .venv/bin/python -I -B evaluate.py
 .venv/bin/python -I -B evaluate_selection.py --help
-python3 -B evaluate_codex.py --help
 ```
 
-Real Codex evaluation requires an exact declared external-request budget and model
-access; help/tests do not call a model. New outputs are explicit local artifacts.
+The Codex-specific evaluate_codex.py/diagnose_codex.py runners were removed with
+the Codex provider; their frozen public corpora/controls remain byte-identical as
+historical inputs and are not System One evidence. Help/tests do not call a model.
+New outputs are explicit local artifacts.
 Historical comparison runners require omitted baseline evidence and original stack
 versions; they are research-only, not public installation steps. See
 [evaluation provenance](../../docs/EVALUATION.md) and

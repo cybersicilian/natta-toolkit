@@ -168,12 +168,13 @@ natta plan "Build Example, test it, commit it, then upload it to TestFlight"
 natta do "Build Example, test it, commit it, then upload it to TestFlight"
 ```
 
-One router/planner request still suffices; no per-step provider calls exist.
-TestFlight is added through additive routing descriptions and planner-v3 controls.
+One System One route or batched plan call still suffices; no per-step provider calls exist.
+TestFlight was added through additive routing descriptions and the historical
+planner-v3 controls; System One routing appends the TestFlight policy text to its instructions.
 Historical Phase 4D, planner-v1, commit routing and planner-v2 descriptions,
 provider domains remain separate; public corpora/control hashes are sanitized
-and private results are excluded. The counted evaluation runner accepts
-explicit provider domains so old evaluations continue using their frozen inputs.
+and private results are excluded. The counted Codex evaluation runner that consumed
+these frozen inputs was removed with the provider.
 
 The new frozen routing corpus has **12** cases; planner corpus **16**. They cover
 both apps, aliases/upload/beta wording, unresolved targets, build/upload,
@@ -185,17 +186,10 @@ local public-release veto also prevents model-proposed safe prefixes from hiding
 explicit publish/distribute/review/public-release requests. It is conservative;
 phrasing that mentions public publication may be rejected even in a disclaimer.
 
-No real evaluation has been run from Codex. These opt-in host commands perform
-12 and 16 real Luna calls, never handlers/uploads, and exclusively create private
-new artifacts (existing output paths refuse):
-
-```sh
-cd tools/natta
-python3 -B testflight_evaluation.py routing --allow-external-requests 12 \
-  --output "$PWD/evaluation/testflight-routing-luna-v1.json"
-python3 -B testflight_evaluation.py planner --allow-external-requests 16 \
-  --output "$PWD/evaluation/testflight-planner-luna-v1.json"
-```
+No real evaluation of these corpora has been run. The Codex-specific runner
+(testflight_evaluation.py) was removed with the provider; the frozen public
+corpora/controls remain byte-identical as historical inputs. Their controls hash
+old Codex prompts and are not System One evidence. No System One evaluator ships yet.
 
 ## Host acceptance: preflight first, then deliberate upload
 
@@ -235,9 +229,9 @@ artifacts and explicit version/build mutation remain separate future work.
 Added:
 
 - testflight.py — bounded product workflow and structured result.
-- planner_provider_v3.py — additive provider controls, max4 unchanged.
+- planner_provider_v3.py — additive provider controls, max4 unchanged (since removed with the Codex provider).
 - testflight_semantics.py — conservative public-release veto.
-- testflight_evaluation.py — frozen extension entry point using the existing runner.
+- testflight_evaluation.py — frozen extension entry point using the existing runner (since removed).
 - config/routing-testflight-v1.json — additive description/policy.
 - evaluation/testflight-routing-v1-corpus.json and testflight-routing-v1-controls.json.
 - evaluation/testflight-planner-v1-corpus.json and testflight-planner-v1-controls.json.
@@ -249,15 +243,15 @@ Updated:
 - natta.py, adapters.py, authorization.py — first-class CLI/handler, metadata reuse and approval text.
 - policy.py, confinement.py, semantic_execution.py — scoped effects and existing dispatch/result integration.
 - compound_execution.py — frozen upload consequence and result presentation.
-- router_codex.py, routing.py, planner_provider.py, planning.py — additive semantic domain with historical controls preserved.
-- commit_evaluation.py — reusable evaluation runner hooks; historical default domains retained.
+- router_codex.py, routing.py, planner_provider.py, planning.py — additive semantic domain with historical controls preserved (router_codex.py/planner_provider.py since removed; the capability universe now lives in semantic_catalog.py).
+- commit_evaluation.py — reusable evaluation runner hooks; historical default domains retained (since removed).
 - macos_confinement.py, inspection_compatibility.json — include the new doctor dependency in exact fingerprints and start with no inherited inspection compatibility.
-- tests/test_codex_evaluation.py, test_route.py, test_planning.py, test_commits.py, test_compound_execution.py — distinguish new production and frozen historical domains.
+- tests/test_codex_evaluation.py (since removed), test_route.py, test_planning.py, test_commits.py, test_compound_execution.py — distinguish new production and frozen historical domains.
 - README.md, AGENTS.md and docs/TOOL_DESIGN.md, ROUTING.md, RESULT_CONTRACT.md, EXECUTION_POLICY.md, PLANNING.md, COMPOUND_EXECUTION.md — current product boundaries.
 
 Historical initial implementation validation: 436 total tests, including 40 new TestFlight tests, pass. Providers and
 Apple archive/export/upload commands are mocked. All 28 pre-existing evaluation/
 config artifacts were checked by SHA-256 and remain byte-identical. Existing
 provider-control tests also verify historical prompt/description/schema parity.
-No real Luna calls, app builds/tests/commits, archives/uploads, harness commits or
+No real provider calls, app builds/tests/commits, archives/uploads, harness commits or
 pushes were performed. Local metadata/signing checks ran as described above.

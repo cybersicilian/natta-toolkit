@@ -145,15 +145,17 @@ model is downloaded. Public B/C benchmarks have not been performed during extrac
 ## Production semantic selection
 
 `natta route` is an atomic AI capability with one outcome: return a bounded
-proposed capability as structured data. Luna selects; Natta validates; Luna does
-not execute. The accepted provider is gpt-6-luna, selected through source evaluation. Public definitions retain the bounded
+proposed capability as structured data. System One selects; Natta validates; System
+One does not execute. The provider is System One (TypeSafe Jev by default, or a
+configured Ollama model), answering one typed Choice question with calibrated
+confidence; it replaced the removed Codex/gpt-6-luna provider. Public definitions retain the bounded
 selection contract; private empirical outputs are excluded.
 
-Shared `router_codex.py` owns bounded provider invocation and validation, `routing.py` owns the
+`system_one.py` owns bounded provider invocation and answer revalidation,
+`semantic_catalog.py` owns the capability universe and integrity checks, `routing.py` owns the
 selection result, and argparse registrations remain authoritative for executable
 IDs. Production metadata in `config/routing.json` matches the frozen descriptions;
-the evaluator verifies that immutable snapshot without production imports of
-evaluation scripts. This is not a general capability/effect framework. The router performs no project inspection or execution. Local resolution and
+`semantic_catalog.py` verifies that immutable snapshot. This is not a general capability/effect framework. The router performs no project inspection or execution. Local resolution and
 validated execute/do are separate layers; chat, autonomous orchestration and
 heuristic capability routing are not implemented. See [ROUTING.md](ROUTING.md).
 
@@ -161,9 +163,9 @@ heuristic capability routing are not implemented. See [ROUTING.md](ROUTING.md).
 
 After validated capability selection, production route derives required parameters
 from argparse and resolves registry aliases/display names plus explicit verify
-levels using pure stdlib `parameters.py`. Luna still makes one capability choice;
-Natta resolves and validates locally; nothing executes. The evaluator remains
-capability-only. This layer adds no second model request, project catalog, broad
+levels using pure stdlib `parameters.py`. System One still makes one capability choice;
+Natta resolves and validates locally; nothing executes. Historical routing
+evaluation was capability-only. This layer adds no second model request, project catalog, broad
 NLP, runtime state or general permission framework. Structured completeness is
 planning data, not execution authorization. Missing/ambiguous/invalid parameters
 remain explicit. See [matching and syntax](ROUTING.md#deterministic-parameter-resolution).
@@ -209,7 +211,7 @@ See [current confinement boundary](MACOS_CONFINEMENT.md).
 ## Phase 8A bounded orchestration planning
 
 The separate `plan` surface proposes one to four linear capability intents in one
-Luna call. Local Natta validation binds them to registry projects, CLI parameter
+batched System One call. Local Natta validation binds them to registry projects, CLI parameter
 schemas, policy and static handler coverage. It computes authorization/effect
 summaries but dispatches nothing. Model suggestions grant no authority.
 `route` selects/reports one capability, `execute` authorizes one existing handler,
@@ -227,12 +229,12 @@ Route never executes. Commit has no native confinement requirement and uses
 mandatory commit-aware runtime evidence; only index/HEAD mutation is permitted.
 Working-tree/branch/repository changes fail, with no rollback. ExecutionResult
 result.commit carries the immutable CommitResult, including truthful mutation
-state after failure. Planner v2 may report commit intents, never execute them.
+state after failure. The planner may report commit intents, never execute them.
 Historical provider domains remain separate; public definitions have sanitized
 project names/control hashes and private results are excluded. See [COMMIT.md](COMMIT.md).
 
 Interactive semantic authorization is terminal-only and continues the same frozen
-resolved action without a second Luna call. --json/non-TTY never prompt; --confirm
+resolved action without a second System One call. --json/non-TTY never prompt; --confirm
 preauthorizes one invocation. Direct commands stay noninteractive. See
 [authorization contract](EXECUTION_GATE.md#interactive-authorization).
 

@@ -7,20 +7,82 @@
 > `route`, `execute` and `plan` retain their existing boundaries; direct CLI remains
 > primary. See [compound execution contract](COMPOUND_EXECUTION.md).
 
-# Current planner version
+# Current planner: system-one-planner-v1
 
-The source implementation evaluated the bounded planner before adoption.
-Private result artifacts are excluded; public corpora and controls are sanitized
-reproducible definitions. Production planning uses **testflight-planner-v1**,
-adding TestFlight to the commit-v2 domain. The experimental result field, Max4
-and non-execution boundary remain unchanged.
-See [COMMIT.md](COMMIT.md) for commit's explicit authorization, Git effect union,
-whole-goal push/custom-message rejection and exact focused evaluation commands.
-The remainder documents the accepted six-capability v1 contract and its preserved
-historical evaluator; it must not be read as commit or TestFlight planning evidence.
-Current production permits status/context/diff/build/test/verify/commit/testflight,
-uses planner_provider_v3.py, and shares local registry/schema/policy/handler
-validation. Projects/doctor remain excluded. See TESTFLIGHT.md for additive controls.
+`natta plan [--json] GOAL` proposes an experimental linear plan of one to four
+steps and never executes. `do` reuses it, then authorizes and dispatches the
+frozen plan (see [COMPOUND_EXECUTION.md](COMPOUND_EXECUTION.md)). The permitted
+capabilities are status/context/diff/build/test/verify/commit/testflight;
+projects/doctor stay excluded. Commit and TestFlight keep their whole-goal
+rejection rules (see [COMMIT.md](COMMIT.md) and [TESTFLIGHT.md](TESTFLIGHT.md)).
+
+## One batched System One call
+
+Each goal makes exactly one System One call. That is one HTTP request with Jev,
+or one request per question (nine) with Ollama. There are no retries beyond
+bounded Jev 429/529 backoff, no fallback and no per-step routing. The state is
+`{"goal": TEXT}` and the questions are fixed:
+
+| Question | Options | Meaning |
+| --- | --- | --- |
+| `scope` | `supported`, `unsupported` | Can the **whole** goal be done with the listed capabilities in at most four steps? Any other operation, such as push, a custom commit message or public release, makes it unsupported. A prefix is never accepted. |
+| `step_1`..`step_4` | the eight planner capabilities, `stop` | The capability for step *k*, in stated order with explicit repeats, or `stop` if there are fewer than *k* steps. |
+| `project_1`..`project_4` | registered aliases, `unspecified` | The registered project step *k* acts on. Each option is described by display name and aliases only. |
+
+Answers are converted to a candidate and then pass through the **unchanged**
+local validation described below (registry, argparse schema, policy, handler
+binding). Conversion fails closed:
+
+- A `stop` must be followed only by `stop`; otherwise `invalid_plan`/`malformed_plan`.
+  `step_1=stop` is `no_match`.
+- `scope=unsupported` is `no_match` with `reason=unsupported_goal`.
+- `unspecified` for a real step is `no_match` with `reason=project_unspecified`.
+  A chosen project must also be named in the goal text (alias, registered alias
+  or display name, matched as in route resolution, so pronouns like "it" resolve
+  to a project the goal names). Otherwise the result is
+  `invalid_plan`/`unknown_project` with `invalid_step`.
+- Verify levels are **not** asked. They come from explicit `level N` text in the
+  goal via `parameters.py`. A verify step without one is `no_match` with
+  `reason=level_missing`. Invalid or conflicting distinct levels are
+  `invalid_plan`/`invalid_argument`. One explicit level therefore applies to
+  every verify step of the goal.
+- The local public-release veto still turns a public App Store goal into `no_match`.
+
+### Confidence gate
+
+Every deciding answer (scope, the step answers up to and including the first
+`stop`, and the project answers of real steps) must reach `min_confidence`
+(default 0.5) and must carry a confidence. Otherwise the result is `no_match`
+with `reason=low_confidence` and zero steps, so `do` executes nothing even with
+`--confirm`. Answers after the closing `stop` do not decide the plan.
+
+### Result additions
+
+PlanResult keeps every field and status described below. It now reports
+`provider="system-one"`, `planner_version="system-one-planner-v1"`, `backend`,
+`model`, `min_confidence`, `reason` (null or one of `low_confidence`,
+`unsupported_goal`, `project_unspecified`, `level_missing` on `no_match`) and
+`answers`: for each question, `choice`, `probabilities` (or null) and
+`confidence` (or null). `external_requests` counts System One HTTP requests.
+Provider failures are `provider_error` with bounded codes shared with routing
+(credentials_missing, provider_unavailable, provider_timeout, rate_limited,
+overloaded, provider_failure, malformed_output, provider_configuration_invalid).
+
+### What is sent
+
+The goal, Natta's fixed instructions, the planner capability descriptions and
+registered project IDs, aliases and display names. No repository paths,
+contents, execution configuration, diffs or documents are sent. The data goes to
+TypeSafe over HTTPS by default, or to the configured Ollama host. See
+[the trust model](../../../docs/SECURITY.md).
+
+### Known narrowing
+
+Because levels are resolved from the whole goal, a plan that needs two different
+verify levels, such as "verify Example at level 1 and Sample at level 2", fails
+closed as `invalid_argument` instead of being planned. None of the public planner
+corpora contain such a case. System One planning accuracy has not been measured on
+those corpora; see [evaluation provenance](../../../docs/EVALUATION.md).
 
 # Historical Phase 8A v1 contract (superseded domain/provider)
 
@@ -29,39 +91,12 @@ They never execute a step. `route` continues to report one capability; `execute`
 continues to authorize and execute one capability through its existing gate.
 In this historical Phase 8A scope, do was not implemented; current bounded do is documented separately. No confirmation flag exists on plan.
 
-## Separate provider mode
+## Separate provider mode (removed)
 
-`planner_provider.py` uses explicit gpt-6-luna and version `phase8a-v1`. Its prompt
-and output schema are separate from the accepted single-capability router.
-Historical capability-selection evaluation and order-stability acceptance do
-not validate orchestration, project suggestions or argument suggestions.
-
-One goal makes one planner request, with no per-step classification, recursive
-calls, retries, fallback or execution. The existing Codex isolation argv builder,
-CLI-feature probe and fail-closed JSONL parser are reused. Only the developer
-policy and structured output schema differ. Read-only sandbox, approval=never,
-ignored user config/rules, skipped host skill discovery, disabled tools/features,
-web and plugins were disabled. Provider child-shell environment inheritance is
-disabled; the provider process itself inherits the host environment and is not
-independently containerized by Natta.
-Prohibited action/error items and unknown event/item types fail closed.
-
-The separate sterile workspace is generated at
-`~/Library/Application Support/NattaToolkit/planner-codex/`. Its only artifacts are
-AGENTS.md, capabilities.json and output-schema.json. The same strict owner,
-permissions, unexpected-file, symlink and hard-link checks apply. Project metadata
-contains only canonical IDs, registered aliases and display names. No repository
-paths, contents, execution configuration, diffs or application documents are sent.
-The goal is JSON-encoded as untrusted input. Reasoning, transcripts and raw JSONL
-are discarded; requests are not persistently logged. Generated artifacts contain
-no requests. Evaluation explicitly saves only validated results, metrics and
-source/control identities.
-
-The strict provider result has exactly `status` and `steps`. Status is planned or
-no_match. Each step has exactly capability, project and arguments; no model-owned
-policy, effects, authorization, handler, command, path or reasoning field exists.
-The schema bounds IDs/project references and arguments, while local validation
-checks their capability-specific relationships independently.
+The historical Phase 8A planner used a separate Codex/`gpt-6-luna` workspace and
+prompt. That provider and its evaluator were removed. The structural contract
+below (local validation, immutable result) is unchanged and is what
+`system-one-planner-v1` answers are validated against.
 
 ## Local validation
 
@@ -74,7 +109,7 @@ in explicit order. No optimizer, DAG, loops, conditions, branching, parallelism,
 retries or dynamic replanning exists.
 
 The v1 validator validated each untrusted proposal against (current production
-uses the additive eight-capability v3 domain):
+uses the additive eight-capability domain):
 
 - authoritative executable CLI IDs and the six-capability planning subset;
 - current project registry ID, aliases or display name, matched as a complete
@@ -161,24 +196,9 @@ first frozen case once; evaluation uses all 36 in frozen file order. Both output
 are exclusive private new files; existing artifacts refuse before provider use.
 Interrupted runs save incomplete evidence and never pass acceptance.
 
-From a normal terminal, first run a one-request smoke (no capability execution):
-
-```sh
-cd tools/natta
-python3 -B planner_evaluation.py smoke --allow-external-requests 1 \
-  --output "$PWD/evaluation/planner-luna-smoke-v1.json"
-```
-
-Inspect the validated diff/build Example result in that artifact. If smoke succeeds,
-run the compact evaluation, exactly 36 additional requests:
-
-```sh
-python3 -B planner_evaluation.py evaluate --allow-external-requests 36 \
-  --output "$PWD/evaluation/planner-luna-reference-v1.json"
-```
-
-Do not overwrite earlier results or launch a larger benchmark automatically.
-These are explicit counted external calls; ordinary tests use mocks only.
+The Codex-specific runner for this frozen evaluation (`planner_evaluation.py`) was
+removed with the provider. The corpus and controls remain byte-identical as
+historical inputs; their controls hash the removed Codex prompt and schema.
 
 ## TestFlight extension
 

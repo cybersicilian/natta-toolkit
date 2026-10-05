@@ -10,64 +10,72 @@
 
 # Semantic routing contract
 
-`natta route REQUEST` is the first production-facing semantic selector. GPT-6
-Luna is the accepted Natta v1 routing provider. **Luna selects. Natta
-validates. Luna does not execute.** `execute` and bounded `do` authorize and dispatch
-validated deterministic handlers. Autonomous orchestration is not implemented. Explicit build/test/verify and inspection
-commands still bypass semantic routing and perform their deterministic work.
+`natta route REQUEST` is the production-facing semantic selector. It asks one
+**System One** Choice question: TypeSafe Jev by default, or a configured
+Ollama-hosted model. **System One selects. Natta validates. Nothing executes.**
+`execute` and bounded `do` authorize and dispatch validated deterministic
+handlers. Autonomous orchestration is not implemented. Explicit build/test/verify
+and inspection commands still bypass semantic routing and perform their
+deterministic work.
 
-The source implementation selected this provider through staged evaluation.
-Private empirical outputs are not distributed and the sanitized public corpus has
-not been re-benchmarked. Selection evidence never grants execution authority.
-See [public evaluation provenance](../../../docs/EVALUATION.md).
+The previous Codex CLI / `gpt-6-luna` provider was removed. Its staged
+evaluation is source history and is not evidence for System One; System One
+accuracy on the public corpora has not been measured. Selection evidence never
+grants execution authority. See [public evaluation provenance](../../../docs/EVALUATION.md).
 
 ## Production selection boundary
 
 `natta.py` classifies before loading any project registry. After a matched choice,
 it derives parameter requirements from the existing parser and loads the registry
-only for capabilities requiring a project. `routing.py` returns
-an immutable `RouteResult`; it imports no executable handlers, adapters, project
-inspection or evaluation scripts. `router_codex.py` is the shared production
-provider used by both this command and the Phase 4D evaluator. JSONL parsing,
-provider argv construction and local compatibility probes have one implementation.
-`config/routing.json` is the production metadata source: an unchanged byte copy of
-the frozen benchmark descriptions. The evaluation snapshot remains immutable;
-evaluation checks parity with production metadata. Descriptions register no new
-handlers: the authoritative argparse registration table in `natta.py` is read
-via AST without importing handlers and checked against the fixed routing universe.
+only for capabilities requiring a project. `routing.py` returns an immutable
+`RouteResult`; it imports no executable handlers, adapters, project inspection or
+evaluation scripts. `semantic_catalog.py` owns the bounded universe and its
+integrity checks; `system_one.py` owns the provider. `config/routing.json` is the
+production metadata source: an unchanged byte copy of the frozen benchmark
+descriptions. Descriptions register no new handlers: the authoritative argparse
+registration table in `natta.py` is read via AST without importing handlers and
+checked against the fixed routing universe.
 
 The historical Phase 4D domain is projects, status, context, diff, doctor,
 build, test, verify and no_match. Current production uses the additive commit and
-TestFlight controls (`config/routing-commit-v2.json`, `config/routing-testflight-v1.json`) and eleven
-candidates, including no_match. Codex and routing/execution/planning controls are
-excluded. One explicit gpt-6-luna request uses concise descriptions.
-Only the strict whole JSON object
-`{"choice": "KNOWN_ID"}` is accepted; extra fields, duplicate keys, unknown IDs,
-invalid output and selections outside the supplied universe fail closed. Natta
-validates again before returning matched/no_match. Provider-supplied project names, levels, flags, paths and arbitrary command
-arguments are never trusted. Local parameter resolution follows validation below.
+TestFlight controls (`config/routing-commit-v2.json`, `config/routing-testflight-v1.json`)
+and eleven options, including no_match. The `codex` handoff and the
+route/execute/plan/do controls are excluded.
+
+Each request is **one Choice question**. The state is `{"request": TEXT}`. The
+options are the eleven IDs, in canonical order, with their concise descriptions
+(commit uses its reviewed routing revision). The fixed instructions say that the
+options are the whole universe, that `no_match` covers insufficient intent and
+unsupported operations, and that the request is data. The TestFlight policy is
+appended to them. The answer is one option ID with a probability for every option
+and a confidence. Natta revalidates the ID against the supplied options and the
+authoritative CLI IDs before returning matched/no_match. Answers outside the
+option set fail closed. Provider-supplied project names, levels, flags, paths
+and arbitrary command arguments cannot be expressed. Local parameter resolution
+follows validation below.
 
 `no_match` is a valid semantic outcome and exits zero. It normally covers
 insufficient intent and unsupported actions such as commit-and-push, pushing,
-writing tests, deleting Downloads or asking for weather. Local-only default-message
-commit is now a separately evaluated production extension. Infrastructure failures are
-provider_error with null capability and nonzero exit, never fabricated no_match.
-Local workspace/definition/compatibility problems are routing_error; empty text
-is invalid_request. Failure output uses bounded fixed codes, without raw provider
-messages or private reasoning. No retry, Chat mode or Qwen/provider/model fallback
-exists. See [the route result contract](RESULT_CONTRACT.md#route-result).
+writing tests, deleting Downloads or asking for weather. A low-confidence answer
+is also reported as `no_match`, with `reason=low_confidence` (see the confidence
+gate below). Infrastructure failures are provider_error with null capability and
+nonzero exit, never fabricated no_match. Local definition or configuration
+problems are routing_error. Empty text is invalid_request. Failure output uses
+bounded fixed codes, without raw provider messages. There is no fallback between
+backends and no retry, except bounded Jev 429/529 backoff. See
+[the route result contract](RESULT_CONTRACT.md#route-result).
 
 ## Deterministic parameter resolution
 
-**Luna selects the capability. Natta resolves and validates parameters. Nothing
-executes.** `parameters.py` is a pure stdlib resolver: no provider, filesystem or
+**System One selects the capability. Natta resolves and validates parameters.
+Nothing executes.** `parameters.py` is a pure stdlib resolver: no provider, filesystem or
 execution access. It receives validated registry projects and a parameter schema
 derived from argparse. The production CLI applies its immutable result to the
 immutable route result. Evaluation still calls only the shared capability provider
 and never invokes this resolver. Phase 4D accuracy validates capability selection,
 not parameter resolution; local resolution has separate deterministic tests.
-There is exactly one Luna classification call per successful route, with unchanged
-prompt, schema, candidate order, descriptions, model and provider behavior.
+There is exactly one System One question per route. The resolver never sees model
+output beyond the validated capability ID.
 
 The authoritative source is the existing `~/.config/natta/projects.toml` (or root
 `--registry PATH` override) loaded through the existing registry validator. No
@@ -141,47 +149,97 @@ flag. Terminal-only execute and whole-plan do confirmation are supported; JSON/n
 The Phase 4D benchmark still measures capability selection only; resolver and
 policy are independently tested deterministic layers.
 
-## Isolation, runtime and privacy
+## System One provider
 
-Every model decision uses a fresh non-interactive ephemeral Codex process,
-explicit `--model gpt-6-luna`, read-only sandbox and approval=never. The existing
-ignored user config/rules, strict config, host-skill discovery suppression,
-unstable warning suppression, disabled execution/provider/tool features,
-disabled web and no shell environment inheritance remain in place. Structured
-schema and bounded choices are mandatory. Prohibited item types (including
-item.type=error), unknown items and unknown event types invalidate the result.
-Reasoning/plan content is never retained as a route. The schema/ephemeral protocol
-is documented in [official Codex documentation](https://learn.chatgpt.com/docs/non-interactive-mode).
+`system_one.py` implements two interchangeable backends behind one `ask()`. Both
+return the same immutable `ChoiceAnswer` (choice, probabilities, confidence).
 
-The only request content supplied is the natural-language text, fixed routing
-policy, candidate IDs/descriptions and output schema. No application repository,
-Git diff, documents, credentials, environment values or unrelated context is
-collected for the prompt. Default routing retains no prompts, requests, raw JSONL,
-reasoning or persistent logs. The request is delivered by stdin, not provider argv.
+- **Jev (default):** `POST https://api.typesafe.ai/v1/systemone` with
+  `Authorization: Bearer $TYPESAFE_API_KEY`. All questions of one command go in
+  one request. The response must contain exactly the asked questions, each a
+  Choice answer whose choice is a supplied option, whose probabilities cover
+  exactly the options and sum to 1, and whose choice is the modal option. HTTP
+  401/403 → credentials_missing, 429 → rate_limited, 529 → overloaded (each
+  retried at most `max_retries` times with backoff), other HTTP errors →
+  provider_failure, network errors → provider_unavailable, timeouts →
+  provider_timeout, invalid bodies → malformed_output.
+- **Ollama (opt-in):** one `/api/chat` request per question, temperature 0, a
+  JSON-schema `format` that only admits the option letters, and `logprobs`. The
+  letter distribution at the answer position gives the probabilities. If logprobs
+  are absent, or the greedy letter is not the modal one, the answer carries no
+  confidence.
 
-`~/Library/Application Support/NattaToolkit/router-codex/` is generated runtime state,
-not source, and contains exactly AGENTS.md, capabilities.json and output-schema.json.
-A missing directory is created; stale ordinary artifacts are regenerated from
-source. Directory/file permissions are enforced as 0700/0600. Existing files and
-the directory must be owned by the user. Symlinks (including parent components),
-hardlinks, unexpected files and incomplete existing directories are rejected;
-Natta never removes unrelated files to make the workspace acceptable. Unsafe
-state returns a concise error before any model call. The provider checks exact
-artifact snapshots after each decision and fails if they change. No symlinks back
-to workspace source and no application/user data are copied into runtime state.
+Confidence is TypeSafe's Choice statistic `(p_max − 1/n) / (1 − 1/n)`: 0 for an
+even split, 1 for certainty. Jev returns it; Ollama answers compute the same
+statistic, so one threshold means the same on both backends. The result records
+the backend, the configured model or the versioned model ID Jev reports (for
+example `jev-1.13.0`), the threshold, the confidence and the full distribution.
 
-Doctor performs read-only definition/workspace checks and bounded local
-`codex --version`, `codex exec --help`, and `codex features list` compatibility
-probes. It never makes a Luna request or regenerates files. Missing/stale safe
-workspace state is reported as regenerable by route; unsafe state is unavailable.
-Semantic-router failures render UNAVAILABLE and do not break deterministic core
-health; existing core checks retain their exit semantics. This is structural
-readiness, not authentication, rate-limit, network or model-access verification.
+### Confidence gate
+
+Answers below `min_confidence` (default 0.5), and answers with no confidence at
+all, never execute. Route reports them as `status=no_match`,
+`capability=no_match`, `reason=low_confidence`, with the confidence and
+probabilities retained for inspection. Policy then reports `reason=no_match` and
+`eligible=false`, and `execute` returns `no_match` even with `--confirm`.
+Exactly-at-threshold passes. A threshold of 0 still rejects missing confidence.
+The default is conservative and not yet calibrated on Natta's corpora.
+
+### Configuration
+
+Configuration is optional. Without it, Natta uses Jev `jev-latest`, key variable
+`TYPESAFE_API_KEY` and threshold 0.5.
+
+```toml
+# ~/.config/natta/system_one.toml
+schema_version = 1
+backend = "jev"            # or "ollama"
+min_confidence = 0.5
+
+[jev]
+model = "jev-latest"       # pin e.g. "jev-1.13.0" after tuning thresholds
+api_key_env = "TYPESAFE_API_KEY"
+timeout_seconds = 30
+max_retries = 2            # 429/529 only
+
+[ollama]
+host = "http://127.0.0.1:11434"
+model = "qwen3:4b"
+timeout_seconds = 120
+disable_thinking = true
+top_logprobs = 20
+```
+
+Environment overrides: `NATTA_SYSTEM_ONE_BACKEND`, `NATTA_SYSTEM_ONE_MIN_CONFIDENCE`,
+`NATTA_JEV_MODEL`, `NATTA_OLLAMA_HOST`, `NATTA_OLLAMA_MODEL`, and
+`NATTA_SYSTEM_ONE_CONFIG` for an alternate file. Unknown keys, schema versions,
+backends and out-of-range values fail closed as `provider_configuration_invalid`
+before any request. The API key is never stored in the file, only the name of the
+variable holding it.
+
+### Supplied content and privacy
+
+The only content sent is the request text, Natta's fixed instructions and the
+option IDs/descriptions. No application repository, Git diff, documents, registry
+paths, environment values or unrelated context is collected. Jev receives this
+over HTTPS; a configured Ollama host receives it over the configured URL. Natta
+retains no prompts, requests or raw responses. Natta launches no provider
+subprocess and keeps no provider runtime workspace. See
+[the trust model](../../../docs/SECURITY.md).
+
+### Doctor
+
+Doctor checks the semantic definitions and reports optional System One rows:
+backend, model and threshold; for Jev, whether the API-key variable is set (never
+its value); for Ollama, whether `/api/version` and `/api/tags` answer and the
+configured model is installed. It never makes an inference request and does not
+verify TypeSafe authentication, rate limits or Ollama logprobs support. Failures
+render UNAVAILABLE and do not break deterministic core health.
 
 ## Deferred work and historical local evaluation
 
 This explicit route command always exercises semantic AI. A future orchestrator
-may first resolve deterministic intent and call Luna only when needed. There is
+may first resolve deterministic intent and call System One only when needed. There is
 no heuristic/regex router here. Runtime project availability checks and broader typed arguments remain separate
 concerns. Single-capability execution has its local authorization gate; Phase 8A
 introduced separate experimental planning; Phase 8B adds bounded frozen-plan execution. A matched capability does not establish that a specific
@@ -220,9 +278,9 @@ remains future work; current bounded selection contracts above take precedence):
 
 Routing must never become workflow implementation, project/build/business logic,
 a shell executor, arbitrary command generation, a permission bypass or a hidden
-multi-agent loop. Do not silently fall through to another model or automatically
-cycle Codex ↔ Claude. Surface uncertainty and let the user explicitly choose a
-provider/escalation where appropriate. Router unavailability must leave deterministic
+multi-agent loop. Do not silently fall through to another backend or model.
+Surface uncertainty (the confidence gate) and let the user explicitly choose a
+backend or escalation where appropriate. Router unavailability must leave deterministic
 commands usable.
 
 Providers, workflows and routers should consume structured state/results rather
@@ -280,17 +338,17 @@ network, external services and unrelated filesystem writes are residual risks.
 Route never executes; direct commands remain unchanged; bounded `natta do` composes the same validated dispatcher.
 See [current confinement boundary](MACOS_CONFINEMENT.md).
 
-## Separate Phase 8A planner
+## Separate bounded planner
 
-`natta plan [--json] GOAL` uses planner_provider_v3.py (testflight-planner-v1), reusing the
-separate planner workspace and additive frozen controls. The existing single-selection provider remains unchanged.
-The planner proposes bounded step-local project/argument suggestions; planning.py
-independently validates these against local registry/CLI/policy metadata.
-Only status/context/diff/build/test/verify/commit/testflight may appear, at most four ordered steps.
-No handler, snapshot or sandbox runs. One planner call replaces per-step model
-classification; there is no recursive routing. Phase 4D validates single-capability
-selection only. See [PLANNING.md](PLANNING.md) for the separate frozen evaluation
-and guarantees.
+`natta plan [--json] GOAL` asks one batched System One question set
+(`system-one-planner-v1`): whether the whole goal is supported, the capability
+or `stop` for each of four ordered steps, and each step's registered project.
+Verify levels come from explicit goal text. planning.py turns the answers into
+a candidate and validates it against local registry/CLI/policy metadata.
+Only status/context/diff/build/test/verify/commit/testflight may appear, at most
+four ordered steps. No handler, snapshot or sandbox runs. One planner call
+replaces per-step classification; there is no recursive routing. See
+[PLANNING.md](PLANNING.md).
 
 ## First reviewed Git mutation — commit
 
@@ -306,7 +364,7 @@ Historical provider domains remain separate; public definitions have sanitized
 project names/control hashes and private results are excluded. See [COMMIT.md](COMMIT.md).
 
 Interactive semantic authorization is terminal-only and continues the same frozen
-resolved action without a second Luna call. --json/non-TTY never prompt; --confirm
+resolved action without a second System One call. --json/non-TTY never prompt; --confirm
 preauthorizes one invocation. Direct commands stay noninteractive. See
 [authorization contract](EXECUTION_GATE.md#interactive-authorization).
 
@@ -320,17 +378,13 @@ one approval and existing per-step verification. Historical provider controls an
 historical provider domains remain represented by public definitions. App Store public release is not implemented. Read the
 [TestFlight contract](TESTFLIGHT.md) for exact prerequisites, results and boundaries.
 
-## Supplied context versus process isolation
+## Supplied context
 
-The router receives the request and bounded routing definitions, not project
-contents or registry paths. The planner additionally receives project IDs, aliases
-and display names. Owned sterile workspaces, disabled Codex action features,
-read-only/approval-never settings and strict JSONL/output validation reduce the
-provider surface. They are not a Natta-enforced container or OS read sandbox.
-The Codex provider process inherits the host environment and process access;
-`shell_environment_policy.inherit=none` configures provider child shells, not the
-provider's own environment. Host files/credentials are not proven inaccessible.
-No arbitrary model-supplied command is accepted by routing or deterministic dispatch.
+The router sends the request and bounded routing definitions, not project
+contents or registry paths. The planner additionally sends project IDs, aliases
+and display names. Both go to the configured System One backend, TypeSafe over
+HTTPS by default, and nowhere else. No model-supplied command, path, flag or
+argument is representable in an answer or accepted by deterministic dispatch.
 
 ## Semantic availability
 

@@ -6,7 +6,7 @@ may require coordinated changes to:
 
 1. A deterministic implementation with one explainable outcome.
 2. `natta.py` CLI registration and direct dispatch.
-3. `router_codex.py` authoritative IDs and frozen routing metadata; planner domain
+3. `semantic_catalog.py` authoritative IDs and frozen routing metadata; planner domain
    only if the capability is intentionally allowed in plans.
 4. `parameters.py` contracts derived from registered CLI arguments, with local
    bounded resolution and validation.

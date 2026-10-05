@@ -4,7 +4,7 @@
 
 # Declared effects and execution policy
 
-The current boundary is Luna capability selection → local capability validation →
+The current boundary is System One capability selection → local capability validation →
 deterministic parameter resolution → deterministic effects/authorization policy →
 structured planning result. **Route never executes.** The separate `natta execute` gate now invokes one existing handler only after
 revalidation and invocation-local authorization; see [EXECUTION_GATE.md](EXECUTION_GATE.md).
@@ -75,7 +75,7 @@ Classification follows the implementation:
 - Doctor reads local/project state, diagnoses adapters and runs local CLI/Xcode
   metadata probes. Such tools may initialize local cache/runtime files, so W is
   conservatively included even though repository inspection is read-only. No
-  Luna decision is made by doctor.
+  System One decision is made by doctor.
 - Workflows allocate an external ExecutionDirectory and discovery/process logs,
   DerivedData, packages and result bundles. Default state is temporary and cleaned
   after ordinary completion/failure; interrupted cleanup can leave temporary
@@ -100,7 +100,7 @@ entry may authorize git_index_write/git_commit; only the reviewed explicit
 TestFlight entry may authorize network/external_service_mutation. Catalog validation
 rejects these effects on other targets, and forbidden entries are never eligible.
 The network restriction describes the proposed executable target, not the
-separate Luna classification request's network usage. Local policy evaluation
+separate System One classification request's network usage. Local policy evaluation
 makes zero provider requests or processes.
 
 Read-only repositories do not imply zero writes elsewhere. Existing integrity

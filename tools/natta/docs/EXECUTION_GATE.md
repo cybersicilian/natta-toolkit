@@ -4,10 +4,10 @@
 
 # Single-capability semantic execution
 
-Luna selects → Natta validates → deterministic resolver → deterministic policy →
-invocation-local authorization → protected snapshot → revalidated bound handler →
-post-snapshot/effect verification. Luna never authorizes
-or executes. `natta route` remains permanently reporting-only. Bounded `natta do`
+System One selects → confidence gate → Natta validates → deterministic resolver →
+deterministic policy → invocation-local authorization → protected snapshot →
+revalidated bound handler → post-snapshot/effect verification. System One never
+authorizes or executes. `natta route` remains permanently reporting-only. Bounded `natta do`
 composes this gate after whole-plan authorization. Interactive terminal confirmation is supported.
 
 ```sh
@@ -17,10 +17,13 @@ natta execute [--json] --confirm "Build Example for the simulator" # may build
 ```
 
 The root `--registry PATH` option retains its usual position before the command.
-Each semantic execution performs the same one Luna selection as route. No new
-prompt/schema/descriptions/order/model, retries or provider fallbacks are introduced.
-Local resolution, authorization, dispatch and deterministic handlers make no Luna
-calls. Direct projects/status/context/diff/doctor/build/test/verify commands keep
+Each semantic execution performs the same one System One selection as route,
+with the same question, options, backend and confidence gate. No retries (beyond
+bounded Jev 429/529 backoff) or backend fallbacks exist. A selection below
+`min_confidence`, or without a confidence, is `no_match` with
+`reason=low_confidence` and never reaches a handler. `--confirm` cannot override
+it. Local resolution, authorization, dispatch and deterministic handlers make no
+provider calls. Direct projects/status/context/diff/doctor/build/test/verify commands keep
 their original behavior, bypassing semantic selection and this authorization gate.
 
 ## Authorization
@@ -43,8 +46,8 @@ same implementations. There are no dynamically imported handlers, shell fragment
 model-produced argv or arbitrary flags.
 
 The execute control parser is deliberately outside the `pages` target registrations
-read by the frozen provider. Execute, route and Codex are not selectable execution
-targets. Plan, do and confinement are also controls outside the target registrations.
+read by `semantic_catalog.py`. Execute, route and the `codex` handoff are not
+selectable execution targets. Plan, do and confinement are also controls outside the target registrations.
 
 Immediately before invoking a handler, the gate validates exact binding/catalog
 coverage, reloads the authoritative registry, reads the actual parser schema and
@@ -176,7 +179,7 @@ lines and returns true/false or null for unavailable prompting. It has no provid
 resolver, policy or execution dependency. The bounded do caller reuses this
 input mechanism for whole-plan authorization before dispatching any step. Route and plan stay
 reporting-only. Direct build/test/verify/commit commands remain noninteractive and
-use no Luna requests. No request/approval logging or persisted authorization exists.
+use no provider requests. No request/approval logging or persisted authorization exists.
 
 Current inspection requires matching host/profile/source identity and fresh
 local validation when that identity changes. The public manifest carries no

@@ -24,7 +24,7 @@ Capability type, declared effects, authorization and confinement are separate
 axes. Only build/test/verify, commit and TestFlight have reviewed native-confinement exemptions;
 new capabilities do not inherit that exemption merely by being workflows.
 
-Luna selects one bounded capability. Natta validates it, resolves registry project
+System One selects one bounded capability. Natta validates it, resolves registry project
 and bounded arguments, reevaluates policy and authorization, and binds an existing
 handler. Raw requests never become handler arguments. An unconfirmed build/test/
 verify never starts. No_match, unresolved parameters, forbidden effects, provider
@@ -55,7 +55,7 @@ code/path races and complete external-service prevention are not claimed.
 
 ## Validation and doctor
 
-`natta confinement validate` performs zero Luna calls and no app/Xcode workflow.
+`natta confinement validate` performs zero System One calls and no app/Xcode workflow.
 It creates disposable fixtures, exercises the exact inspection profile and bound
 inspection handlers, cleans up and saves success only after every check passes.
 There is no --xcode or --verbose validation option anymore.
@@ -73,7 +73,7 @@ Old Xcode records are ignored, not deleted from user runtime state.
 Doctor reports primitive/backend presence, inspection validation and a successful
 informational check: Xcode native confinement deferred / not required. It reads
 structural/version/record facts, performs no native validation fixture or build,
-and makes zero Luna requests. Deferred research is not a broken dependency.
+and makes zero System One requests. Deferred research is not a broken dependency.
 
 ## Workflow result and residual risks
 
@@ -107,8 +107,8 @@ success. No rollback is performed.
 ## Scope retained
 
 Direct status/context/diff/build/test/verify/doctor/projects retain their existing
-behavior: no Luna, new confirmation or semantic sandbox requirement. Semantic
-execute still makes exactly one Luna call; native confinement and runtime effect
+behavior: no System One call, new confirmation or semantic sandbox requirement. Semantic
+execute still makes exactly one System One call; native confinement and runtime effect
 verification make zero. Bounded do reuses the same dispatcher and per-step
 protections; no new confinement backend or provider fallback is introduced.
 
@@ -126,13 +126,17 @@ have not changed. See [COMMIT.md](COMMIT.md).
 
 ## Provider and TestFlight scope
 
-This native backend confines deterministic status/context/diff workers, not Codex
-routing/planning processes or local-model evaluation. Sterile supplied context is
-not OS-enforced host read isolation. TestFlight is explicitly unconfined and may
+This native backend confines deterministic status/context/diff workers, not
+System One routing/planning or local-model evaluation. Natta launches no provider
+subprocess: request text, capability descriptions and, for planning, project
+IDs/aliases/display names go to TypeSafe over HTTPS or the configured Ollama host;
+no repository paths or contents are sent. TestFlight is explicitly unconfined and may
 use Apple network/external services; project/index/HEAD writes remain denied and
 observed by mandatory verification. No universal side-effect prevention is claimed.
 
 The public distribution starts with an empty compatibility history and its own
 current implementation digest. No personal receipt is carried forward. Source
-changes can require fresh explicit local validation; unavailable native acceptance
-never relaxes enforcement.
+changes can require fresh explicit local validation; the System One source change
+regenerated `inspection_compatibility.json`'s current digest with no previous
+entries, so a fresh `natta confinement validate` is needed. Unavailable native
+acceptance never relaxes enforcement.
