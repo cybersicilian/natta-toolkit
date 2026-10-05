@@ -36,11 +36,12 @@ SCOPE_OPTIONS = (
     ('unsupported', 'The goal asks for any other operation (for example push, a custom commit message, '
                     'writing code or tests, deleting files, installing, public App Store release), '
                     'or needs more than four steps.'))
-STEP_INSTRUCTIONS = '''`goal` is a request for an ordered plan of at most four Natta capability steps.
-Which capability is step {index} of that plan, counting steps in the order the goal
-states them and keeping explicit repeats? Answer stop if the goal has fewer than
-{index} steps. Selecting a capability never executes it.'''
-STOP_DESCRIPTION = 'The goal has fewer than {index} steps; there is no step {index}.'
+STEP_INSTRUCTIONS = '''`goal` asks for an ordered sequence of Natta operations. First count how many separate
+operations `goal` explicitly asks for (an operation the goal names twice counts twice).
+If that count is less than {index}, the answer is stop. Otherwise, which capability is
+operation number {index}, in the order the goal states them? Selecting a capability
+never executes it.'''
+STOP_DESCRIPTION = 'The goal asks for fewer than {index} operations, so operation {index} does not exist.'
 PROJECT_INSTRUCTIONS = '''`goal` is a request for an ordered plan of at most four steps. Which registered
 project does step {index} act on? Resolve words such as "it" to the project the goal
 names for that step. Answer unspecified if there is no step {index}, or its project

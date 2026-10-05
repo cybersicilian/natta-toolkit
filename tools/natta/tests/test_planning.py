@@ -136,7 +136,7 @@ class PlanningTests(unittest.TestCase):
         for i in range(1,5):
             self.assertEqual(questions[f'step_{i}'].ids,(*catalog.PLANNER_IDS,'stop'))
             self.assertEqual(questions[f'project_{i}'].ids,('example','sample','unspecified'))
-            self.assertIn(f'step {i}',questions[f'step_{i}'].instructions)
+            self.assertIn(f'operation number {i}',questions[f'step_{i}'].instructions)
         self.assertEqual(dict(questions['project_1'].options)['sample'],'Sample App (also: sampleapp, sample-app)')
         self.assertNotIn('projects',questions['step_1'].ids);self.assertNotIn('doctor',questions['step_1'].ids)
         projects=natta.load_registry(self.registry)
