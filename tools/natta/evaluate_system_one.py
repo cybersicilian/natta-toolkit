@@ -55,9 +55,25 @@ def load_cases(mode, name):
     return cases
 
 
-def required_requests(mode, backend, cases):
-    questions = 1 if mode == 'routing' else 1 + 2 * planning.MAX_STEPS
-    return len(cases) * (1 if backend == 'jev' else questions)
+def required_requests(mode, backend, cases, projects):
+    """Exact count: deterministic plan rejections make no request."""
+    if mode == 'routing':
+        return len(cases)
+    total = 0
+    for case in cases:
+        try:
+            parts = planning.segment(case['request'], projects)
+            planning.resolve_projects(case['request'], parts, projects)
+        except planning.Unplannable:
+            continue
+        total += 1 if backend == 'jev' else 1 + len(parts)
+    return total
+
+
+def evaluation_projects(directory):
+    registry = Path(directory) / 'projects.toml'
+    registry.write_text(REGISTRY)
+    return registry, natta.load_registry(registry)
 
 
 def compact_route(result):
@@ -126,20 +142,18 @@ def run(mode, corpus, allowed, output, *, limit=None, environ=None):
     environ = os.environ if environ is None else environ
     cases = load_cases(mode, corpus)[:limit] if limit else load_cases(mode, corpus)
     config = system_one.load_config(environ=environ)
-    needed = required_requests(mode, config.backend, cases)
-    if type(allowed) is not int or allowed != needed:
-        raise ValueError(f'This run needs exactly {needed} external requests; pass --allow-external-requests {needed}')
-    output = Path(output)
-    with open(output, 'x'):  # refuse to overwrite before any request
-        pass
-    os.chmod(output, 0o600)
-    ungated = replace(config, min_confidence=0.0)
-    parser = natta.make_parser()
-    records, started, complete, requests = [], time.time(), False, 0
     with tempfile.TemporaryDirectory() as tmp:
-        registry = Path(tmp) / 'projects.toml'
-        registry.write_text(REGISTRY)
-        projects = natta.load_registry(registry)
+        registry, projects = evaluation_projects(tmp)
+        needed = required_requests(mode, config.backend, cases, projects)
+        if type(allowed) is not int or allowed != needed:
+            raise ValueError(f'This run needs exactly {needed} external requests; pass --allow-external-requests {needed}')
+        output = Path(output)
+        with open(output, 'x'):  # refuse to overwrite before any request
+            pass
+        os.chmod(output, 0o600)
+        ungated = replace(config, min_confidence=0.0)
+        parser = natta.make_parser()
+        records, started, complete, requests = [], time.time(), False, 0
         bindings = natta.handler_bindings()
         try:
             for case in cases:

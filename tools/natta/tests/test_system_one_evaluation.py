@@ -33,8 +33,14 @@ class EvaluationTests(unittest.TestCase):
 
     def test_budget_must_be_exact_and_declared_before_any_request(self):
         cases = e.load_cases('routing', 'testflight-routing-v1')
-        self.assertEqual(e.required_requests('routing', 'jev', cases), 12)
-        self.assertEqual(e.required_requests('planner', 'ollama', e.load_cases('planner', 'planner')), 36 * 9)
+        with tempfile.TemporaryDirectory() as tmp:
+            _, projects = e.evaluation_projects(tmp)
+            self.assertEqual(e.required_requests('routing', 'jev', cases, projects), 12)
+            planner = e.load_cases('planner', 'planner')
+            jev = e.required_requests('planner', 'jev', planner, projects)
+            # Structural rejections (no project, too many parts) make no request.
+            self.assertLess(jev, 36)
+            self.assertGreater(e.required_requests('planner', 'ollama', planner, projects), 2 * jev)
         with s1fx.forbidden():
             for allowed in (11, 13, 0, True):
                 with self.assertRaises(ValueError):
@@ -75,9 +81,12 @@ class EvaluationTests(unittest.TestCase):
 
     def test_planner_records_answers_and_minimum_deciding_confidence(self):
         out = self.root / 'plan.json'
-        fake = s1fx.plan(['commit'], 'example', confidence={'project_1': 0.4})
-        with s1fx.ask(fake):
-            artifact = e.run('planner', 'commit-planner-v2', 20, out, limit=None, environ={})
+        fake = s1fx.plan(['commit'], confidence={'step_1': 0.4})
+        with tempfile.TemporaryDirectory() as tmp:
+            needed = e.required_requests('planner', 'jev', e.load_cases('planner', 'commit-planner-v2'), e.evaluation_projects(tmp)[1])
+        with s1fx.ask(fake) as ask:
+            artifact = e.run('planner', 'commit-planner-v2', needed, out, limit=None, environ={})
+        self.assertEqual((ask.call_count, artifact['actual_external_requests']), (needed, needed))
         record = next(r for r in artifact['records'] if r['id'] == 'commit-planner-v2-01')
         self.assertEqual(record['confidence'], 0.4)
         self.assertEqual(record['predicted'], record['expected'])

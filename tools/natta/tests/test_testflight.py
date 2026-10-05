@@ -408,6 +408,8 @@ class TestFlightSemanticTests(unittest.TestCase):
         candidate=candidate or {'status':'planned','steps':[{'capability':'testflight','project':'example','arguments':{}}]}
         planned=command in ('plan','do')
         with s1fx.ask(s1fx.plan([]) if planned else s1fx.route('testflight')) as judgment, \
+             patch.object(planning,'segment',return_value=['part']), \
+             patch.object(planning,'resolve_projects',return_value=['example']), \
              patch.object(planning,'candidate',return_value=(candidate,None)) as planner_call, \
              patch.object(natta,'handler_bindings',return_value=handlers), \
              patch('sys.stdin',source),patch('sys.stdout',out), \

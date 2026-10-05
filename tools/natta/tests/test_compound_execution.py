@@ -42,6 +42,8 @@ class CompoundTests(unittest.TestCase):
         # One System One judgment; its answers are replaced by the candidate under test
         # so these tests exercise frozen-plan validation and dispatch directly.
         with s1fx.ask(s1fx.plan([])) as propose, \
+             patch.object(planning, 'segment', return_value=['part']), \
+             patch.object(planning, 'resolve_projects', return_value=['example']), \
              patch.object(planning, 'candidate', return_value=(candidate, None)), \
              patch.object(natta, 'prepare_route', side_effect=AssertionError('routing')), \
              patch.object(natta, 'handler_bindings', return_value=handlers), \
@@ -349,6 +351,8 @@ class CompoundCommitTests(unittest.TestCase):
         def record(argv,*args,**kwargs):
             commands.append(argv);return real_run(argv,*args,**kwargs)
         with s1fx.ask(s1fx.plan([])) as propose, \
+             patch.object(planning,'segment',return_value=['part']), \
+             patch.object(planning,'resolve_projects',return_value=['example']), \
              patch.object(planning,'candidate',return_value=(candidate,None)), \
              patch.object(subprocess,'run',side_effect=record), \
              patch.object(natta,'handler_bindings',return_value=handlers),contextlib.redirect_stdout(io.StringIO()) as out:

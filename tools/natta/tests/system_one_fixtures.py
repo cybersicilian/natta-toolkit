@@ -35,9 +35,7 @@ def answer(question, choice, confidence=0.95):
 
 
 def default_choice(qid):
-    if qid in DEFAULTS:
-        return DEFAULTS[qid]
-    return 'stop' if qid.startswith('step_') else 'unspecified'
+    return DEFAULTS.get(qid, 'no_match')
 
 
 class Fake:
@@ -74,13 +72,14 @@ def route(choice, confidence=0.95, **kwargs):
 
 
 def plan(steps, projects=None, *, scope='supported', confidence=0.95, **kwargs):
-    """steps: capability IDs in order; projects: one alias for all steps, or a list."""
+    """steps: the capability answered for each goal part, in order.
+
+    projects is accepted for readability at call sites only: planning resolves
+    projects deterministically from the goal text, never from System One.
+    """
     choices = {'scope': scope}
-    if isinstance(projects, str) or projects is None:
-        projects = [projects or 'example'] * len(steps)
-    for index, (cap, project) in enumerate(zip(steps, projects), 1):
+    for index, cap in enumerate(steps, 1):
         choices[f'step_{index}'] = cap
-        choices[f'project_{index}'] = project
     return Fake(choices, confidence, **kwargs)
 
 
