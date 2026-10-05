@@ -35,7 +35,9 @@ class ExecutionResult:
     handler_succeeded: bool | None = None
     effect_verification: runtime_effects.VerificationResult = field(default_factory=runtime_effects.VerificationResult)
 
-    confinement: confinement.ConfinementResult = field(default_factory=confinement.ConfinementResult)
+    # String annotation: the field name shadows the module inside the class body,
+    # which breaks eager annotation evaluation on Python 3.11-3.13.
+    confinement: 'confinement.ConfinementResult' = field(default_factory=confinement.ConfinementResult)
 
     @property
     def exit_code(self):
