@@ -167,7 +167,7 @@ remain checked. See [evaluation provenance](../../../docs/EVALUATION.md).
 The Codex-specific runners (commit_evaluation.py, planner_evaluation.py) were
 removed with the provider. These frozen public corpora/controls remain
 byte-identical as historical inputs; their controls hash old Codex prompts and
-are not System One evidence. No System One evaluator ships yet.
+are not System One evidence. Use `evaluate_system_one.py` (see [evaluation provenance](../../../docs/EVALUATION.md)) for System One measurements.
 
 ## Host acceptance — disposable first
 

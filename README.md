@@ -219,7 +219,7 @@ cd tools/natta
 python3 -B -m unittest discover -s tests -v
 ```
 
-The complete 414-test regression suite uses temporary repositories and mocked
+The complete 421-test regression suite uses temporary repositories and mocked
 System One answers/Apple commands, with no network access. Removing the Codex
 provider removed its transport and evaluator tests; no execution-safety test
 was removed. If your global Git config defines external filters (for example

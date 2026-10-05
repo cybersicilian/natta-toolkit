@@ -7,7 +7,7 @@ The Codex CLI / `gpt-6-luna` provider was replaced by System One judgments
 modules, sterile-workspace protocol, Codex evaluators/diagnostics
 (`commit_evaluation.py`, `testflight_evaluation.py`, `planner_evaluation.py`,
 `evaluate_codex.py`, `diagnose_codex.py`) and their tests were removed. The
-regression suite is now 414 mocked tests with no network access. Removed tests
+regression suite is now 421 mocked tests with no network access. Removed tests
 covered only the Codex transport/evaluators; every execution, authorization,
 confinement, commit and TestFlight safety test was kept, and routing/planning
 tests were rewritten against mocked System One answers, including the
@@ -16,11 +16,36 @@ confidence gate and no-fallback behavior.
 The published corpora and controls under `tools/natta/evaluation/` are kept
 byte-identical (pinned by `public-controls-integrity.json`). Their controls hash
 the old Codex prompts and schemas, so they are historical inputs, not System One
-evidence. **System One routing/planning accuracy has not been measured on these
-corpora**, and the default `min_confidence` of 0.5 is TypeSafe's documented
-"genuinely uncertain" floor, not a threshold calibrated for Natta. A
-provider-agnostic evaluator with an explicit request budget would be needed
-before treating any threshold as measured.
+evidence. The default `min_confidence` of 0.5 is TypeSafe's documented
+"genuinely uncertain" floor, not a threshold calibrated for Natta.
+
+### Measuring System One
+
+`tools/natta/evaluate_system_one.py` runs one public corpus against the
+configured backend and never executes anything. It refuses unless
+`--allow-external-requests` equals the exact request count, which is one per case
+with Jev, and one per case for routing or nine per case for planning with Ollama.
+It refuses an existing output file before any request. It asks with the gate
+disabled, records each answer's confidence and probabilities, and derives the
+outcome at every threshold from 0.00 to 0.95 offline. That gives exact accuracy,
+coverage of positive cases, rejection of no_match cases and **unsafe accepts**
+(resolved routes or plans that differ from gold) per threshold. Jev runs are
+billed by TypeSafe.
+
+```sh
+cd tools/natta
+python3 -B evaluate_system_one.py routing --corpus commit-routing-v2 \
+  --allow-external-requests 16 --output "$PWD/evaluation/system-one-routing-commit-v2.json"
+python3 -B evaluate_system_one.py planner --corpus planner \
+  --allow-external-requests 36 --output "$PWD/evaluation/system-one-planner-v1.json"
+```
+
+Corpora: routing `commit-routing-v2`, `commit-routing-holdout-r1`,
+`commit-routing-holdout-r2`, `testflight-routing-v1`; planner `planner`,
+`commit-planner-v2`, `testflight-planner-v1`. Outputs match `*system-one*.json`
+and are ignored by Git. The corpora are small (8–36 cases) and were written for
+the old provider, so a threshold chosen from them is a starting point, not a
+guarantee.
 
 The source implementation's user-verified regression baseline is 441 passed,
 0 failed, 0 skipped. The public derivative retains all 447 test methods and all

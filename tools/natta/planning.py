@@ -190,12 +190,19 @@ def questions(projects):
     return batch
 
 
-def candidate(goal,answers,parser,projects,min_confidence):
-    """Turn validated answers into (candidate, no_match reason). Fails closed."""
+def deciding_questions(answers):
+    """Question IDs whose answers decide the plan, or raise for a stop followed by a step."""
     chosen=[answers[f'step_{i}'].choice for i in range(1,MAX_STEPS+1)]
     count=chosen.index(STOP) if STOP in chosen else MAX_STEPS
     if any(c!=STOP for c in chosen[count:]):raise InvalidPlan(Reason.MALFORMED)  # stop must end the plan
-    used=[SCOPE,*(f'step_{i}' for i in range(1,min(count+1,MAX_STEPS)+1)),*(f'project_{i}' for i in range(1,count+1))]
+    return [SCOPE,*(f'step_{i}' for i in range(1,min(count+1,MAX_STEPS)+1)),*(f'project_{i}' for i in range(1,count+1))]
+
+
+def candidate(goal,answers,parser,projects,min_confidence):
+    """Turn validated answers into (candidate, no_match reason). Fails closed."""
+    used=deciding_questions(answers)
+    chosen=[answers[f'step_{i}'].choice for i in range(1,MAX_STEPS+1)]
+    count=chosen.index(STOP) if STOP in chosen else MAX_STEPS
     if not all(system_one.meets_threshold(answers[q],min_confidence) for q in used):
         return {'status':'no_match','steps':[]},'low_confidence'
     if answers[SCOPE].choice!='supported':return {'status':'no_match','steps':[]},'unsupported_goal'

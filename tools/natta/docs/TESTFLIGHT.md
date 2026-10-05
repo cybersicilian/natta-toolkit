@@ -189,7 +189,7 @@ phrasing that mentions public publication may be rejected even in a disclaimer.
 No real evaluation of these corpora has been run. The Codex-specific runner
 (testflight_evaluation.py) was removed with the provider; the frozen public
 corpora/controls remain byte-identical as historical inputs. Their controls hash
-old Codex prompts and are not System One evidence. No System One evaluator ships yet.
+old Codex prompts and are not System One evidence. Use `evaluate_system_one.py` (see [evaluation provenance](../../../docs/EVALUATION.md)) for System One measurements.
 
 ## Host acceptance: preflight first, then deliberate upload
 
