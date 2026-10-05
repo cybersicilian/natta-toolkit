@@ -16,12 +16,12 @@ import natta
 import parameters
 import policy
 import routing
-import router_codex as provider
+import semantic_catalog
+import system_one_fixtures as s1fx
 import runtime_effects
 import semantic_execution
 import confinement
 import planning
-import planner_provider_v2 as planner
 
 
 class CommitTests(unittest.TestCase):
@@ -35,8 +35,6 @@ class CommitTests(unittest.TestCase):
         self.project=natta.load_registry(self.registry)[0]
         self.initial=self.git('rev-parse','HEAD').strip().decode()
         self.addCleanup(patch.stopall)
-        patch.object(provider,'workspace_path',return_value=self.root/'router').start()
-        patch.object(provider,'probe_cli',return_value='mock Codex').start()
 
     def git(self,*args):
         return subprocess.check_output(['git','-c','core.hooksPath=/dev/null','-c','commit.gpgSign=false','-C',str(self.repo),*args],stderr=subprocess.DEVNULL)
@@ -45,8 +43,7 @@ class CommitTests(unittest.TestCase):
         (self.repo/'tracked').write_text('updated\n')
 
     def invoke(self,argv,choice='commit'):
-        events=json.dumps({'type':'item.completed','item':{'type':'agent_message','text':json.dumps({'choice':choice})}})+'\n'+json.dumps({'type':'turn.completed'})
-        with patch.object(provider,'run_provider',return_value=json.dumps({'choice':choice})) as model,contextlib.redirect_stdout(io.StringIO()) as out:
+        with s1fx.ask(s1fx.route(choice)) as model,contextlib.redirect_stdout(io.StringIO()) as out:
             code=natta.main(['--registry',str(self.registry),*argv])
         return code,out.getvalue(),model
 
@@ -55,7 +52,7 @@ class CommitTests(unittest.TestCase):
         args=parser.parse_args(['commit','example','--message','Improve history layout'])
         self.assertEqual((args.project,args.message),('example','Improve history layout'))
         self.dirty()
-        with patch.object(provider,'run_provider',side_effect=AssertionError('Luna')),contextlib.redirect_stdout(io.StringIO()) as out:
+        with s1fx.forbidden(),contextlib.redirect_stdout(io.StringIO()) as out:
             code=natta.main(['--registry',str(self.registry),'commit','fixture','--json'])
         data=json.loads(out.getvalue());self.assertEqual(code,0)
         self.assertEqual(data['message'],'Update Example App');self.assertEqual(data['project'],'example')
@@ -206,7 +203,7 @@ class CommitTests(unittest.TestCase):
         self.assertFalse(data['execution_started']);model.assert_called_once()
         self.assertEqual(self.git('rev-parse','HEAD').strip().decode(),self.initial)
 
-    def test_semantic_confirmed_one_handler_one_luna_default_message(self):
+    def test_semantic_confirmed_one_handler_one_judgment_default_message(self):
         self.dirty();real=natta.handle_commit
         with patch.object(natta,'handle_commit',wraps=real) as handler, \
              patch.object(confinement,'open_session',side_effect=AssertionError('inspection sandbox')):
@@ -228,23 +225,22 @@ class CommitTests(unittest.TestCase):
         self.assertFalse(data['executed']);self.assertTrue(data['arguments_resolved']);model.assert_called_once()
 
     def test_policy_atomic_explicit_git_only_and_doctor_integrity(self):
-        ids=provider.authoritative_ids()-{'codex','route'}
+        ids=semantic_catalog.executable_ids()
         route=routing.RouteResult('matched','commit',project='example',arguments_resolved=True)
         decision=policy.evaluate(route,ids,parameters.schema_for(natta.make_parser(),'commit'),[self.project])
         self.assertTrue(decision.eligible);self.assertEqual(decision.authorization,policy.Authorization.EXPLICIT)
         self.assertEqual(decision.capability_type,policy.CapabilityType.ATOMIC)
         self.assertTrue(commits.ALLOWED<=decision.effects)
         self.assertFalse({policy.Effect.PROJECT_WRITE,policy.Effect.GIT_PUSH,policy.Effect.NETWORK}&decision.effects)
-        with patch.object(commits,'create',side_effect=AssertionError('commit')),patch.object(provider,'run_provider',side_effect=AssertionError('Luna')):
+        with patch.object(commits,'create',side_effect=AssertionError('commit')),s1fx.forbidden():
             self.assertTrue(all(ok for ok,_ in semantic_execution.doctor_checks(ids,natta.handler_bindings())))
         catalog=dict(policy.CATALOG);catalog['build']=replace(catalog['build'],effects=catalog['build'].effects|commits.ALLOWED)
         with self.assertRaises(ValueError):policy.validate_catalog(ids,catalog)
 
     def test_planner_commit_is_only_a_validated_intent(self):
-        candidate={'status':'planned','steps':[{'capability':c,'project':'Example','arguments':{}} for c in ('build','test','commit')]}
-        with patch.object(planner,'propose',return_value=planner.Reply(json.dumps(candidate),external_requests=1)) as model, \
+        with s1fx.ask(s1fx.plan(['build','test','commit'],'example')) as model, \
              patch.object(commits,'create',side_effect=AssertionError('handler')):
-            result=planning.propose('Build Example, test it, then commit it',natta.make_parser(),[self.project],natta.handler_bindings(),provider_mode=planner)
+            result=planning.propose('Build Example, test it, then commit it',natta.make_parser(),[self.project],natta.handler_bindings())
         self.assertTrue(result.valid);self.assertFalse(result.executed);model.assert_called_once()
         self.assertEqual(result.authorization,policy.Authorization.EXPLICIT);self.assertTrue(commits.ALLOWED<=result.effects)
         self.assertFalse(result.steps[-1].confinement_required)
@@ -253,7 +249,8 @@ class CommitTests(unittest.TestCase):
             self.assertFalse(planning.validate(bad,natta.make_parser(),[self.project],natta.handler_bindings()).valid)
         bad={'status':'planned','steps':[{'capability':'commit','project':'example','arguments':{'message':'AI message'}}]}
         self.assertEqual(planning.validate(bad,natta.make_parser(),[self.project],natta.handler_bindings()).error,'invalid_argument')
-        self.assertIn('Reject the WHOLE goal',planner.POLICY)
+        self.assertIn('Custom commit messages',planning.SCOPE_INSTRUCTIONS)
+        self.assertIn('Never reduce a goal to a supported prefix',planning.SCOPE_INSTRUCTIONS)
 
     def evaluation_registry(self):
         path=self.root/'evaluation-projects.toml'
@@ -261,151 +258,57 @@ class CommitTests(unittest.TestCase):
             ('example',['example-app'],'Example App'),('sample',['sampleapp','sample-app'],'Sample App'))))
         return path
 
-    def test_focused_evaluations_counted_no_execution(self):
-        import commit_evaluation as e
-        registry=self.evaluation_registry();projects=natta.load_registry(registry)
-        for mode,count,suite in (('routing',16,'regression-r2'),('routing',8,'r1-regression-r2'),('routing',8,'holdout-r2'),('planner',20,'baseline')):
-            corpus,control,_=e.controls(mode,projects,suite)
-            self.assertEqual(len(corpus['cases']),count);self.assertEqual(control['predeclared_acceptance']['minimum_exact_accuracy'],1.0 if mode=='routing' else .95)
-            for auth in (None,count-1,count+1,True):
-                with patch.object(provider,'run_provider',side_effect=AssertionError('Luna')), \
-                     patch.object(planner,'propose',side_effect=AssertionError('Luna')):
-                    with self.assertRaises(ValueError):e.run(mode,auth,self.root/'refused.json',registry,suite=suite)
-            replies=([json.dumps({'choice':c['expected']['capability']}) for c in corpus['cases']] if mode=='routing' else
-                [planner.Reply(json.dumps(c['expected']),external_requests=1) for c in corpus['cases']])
-            with patch.object(provider,'run_provider',side_effect=replies) as runner, \
-                 patch.object(planner,'propose',side_effect=replies) as proposed, \
-                 patch.object(commits,'create',side_effect=AssertionError('commit')), \
-                 patch.object(runtime_effects,'capture',side_effect=AssertionError('snapshot')), \
-                 patch.object(runtime_effects,'capture_commit',side_effect=AssertionError('snapshot')):
-                artifact=e.run(mode,count,self.root/(mode+'-'+suite+'.json'),registry,suite=suite)
-            self.assertTrue(artifact['assessment']['passed']);self.assertFalse(artifact['executed'])
-            self.assertEqual(artifact['actual_external_requests'],count)
-            self.assertEqual(runner.call_count if mode=='routing' else proposed.call_count,count)
-            with patch.object(provider,'run_provider',side_effect=AssertionError('Luna')):
-                with self.assertRaises(FileExistsError):e.run(mode,count,self.root/(mode+'-'+suite+'.json'),registry,suite=suite)
-
-    def test_extension_control_change_and_provider_failure_cannot_pass(self):
-        import commit_evaluation as e
-        registry=self.evaluation_registry()
-        with patch.object(planner,'POLICY','changed'),patch.object(planner,'propose',side_effect=AssertionError('Luna')):
-            with self.assertRaises(ValueError):e.run('planner',20,self.root/'changed.json',registry)
-        with patch.object(planner,'propose',return_value=planner.Reply(error='provider_failure',external_requests=1)):
-            artifact=e.run('planner',20,self.root/'failed.json',registry)
-        self.assertFalse(artifact['assessment']['passed']);self.assertFalse(artifact['complete'])
-        self.assertEqual(artifact['metrics']['provider_failures'],20)
-
-
     def test_routing_revision_is_commit_only_and_planner_is_unchanged(self):
-        data=provider.definitions()['concise']
-        revised=provider.production_definitions(routing_revision=True)['concise']
+        data=semantic_catalog.definitions()['concise']
+        revised=semantic_catalog.production_definitions(routing_revision=True)['concise']
         self.assertEqual({k:v for k,v in revised.items() if k!='commit'},data)
-        original=provider.production_definitions()['concise']['commit']
+        original=semantic_catalog.production_definitions()['concise']['commit']
         self.assertIn('named registered project',original)
         self.assertIn('save changes to Git',revised['commit'])
         self.assertIn('omitted, ambiguous, unknown',revised['commit'])
         self.assertEqual(original.split('No push,')[1],revised['commit'].split('No push,')[1])
-        current=provider.workspace_contents('concise',provider.PRODUCTION_IDS)
-        self.assertEqual(current['AGENTS.md'],provider.POLICY)
-        schema=json.loads(current['output-schema.json'])
-        self.assertEqual(schema['required'],['choice'])
-        self.assertFalse(schema['additionalProperties'])
+        # Routing asks with the revised description; planning keeps the original.
+        self.assertEqual(dict(semantic_catalog.routing_options())['commit'],revised['commit'])
+        self.assertEqual(dict(semantic_catalog.planner_options())['commit'],original)
+
+    def compact_route(self,result):
+        return {'capability':result.capability,'project':result.project,
+                'arguments':dict(result.arguments),'arguments_resolved':result.arguments_resolved}
 
     def test_four_regression_cases_select_commit_then_resolve_locally(self):
-        import commit_evaluation as e
         registry=self.evaluation_registry()
-        corpus,_,_=e.controls('routing',natta.load_registry(registry),'regression-r2')
+        corpus=json.loads((natta.ROOT/'evaluation/commit-routing-v2-corpus.json').read_text())
         for case in corpus['cases']:
             if case['id'] not in ('commit-routing-v2-03','commit-routing-v2-04','commit-routing-v2-07','commit-routing-v2-08'):
                 continue
-            with patch.object(provider,'run_provider',return_value='{"choice":"commit"}') as runner, \
+            with s1fx.ask(s1fx.route('commit')) as runner, \
                  patch.object(commits,'create',side_effect=AssertionError('commit')), \
                  patch.object(runtime_effects,'capture_commit',side_effect=AssertionError('snapshot')):
                 result=natta.prepare_route(case['request'],natta.make_parser(),registry)
-            self.assertEqual(e.compact_route(result),case['expected'])
+            self.assertEqual(self.compact_route(result),case['expected'])
             self.assertFalse(result.executed)
             self.assertEqual(runner.call_count,1)
 
-    def test_original_controls_and_failed_result_are_preserved(self):
-        import commit_evaluation as e,hashlib
-        projects=natta.load_registry(self.evaluation_registry())
-        with self.assertRaises(ValueError):e.controls('routing',projects)
-        self.assertEqual(hashlib.sha256((natta.ROOT/'evaluation/commit-routing-v2-corpus.json').read_bytes()).hexdigest(), '9dd43fbfff2ec8f5b35786a79e838cc3ebe15c26ce62d8561139ee9825936c12')
-        # Preserve a newly generated failed evaluation artifact, not private host output.
-        with patch.object(provider, 'run_provider', return_value='{"choice":"no_match"}'):
-            path=self.root/'synthetic-failed-evaluation.json'
-            result=e.run('routing',16,path,self.evaluation_registry(),suite='regression-r2')
-            self.assertFalse(result['assessment']['passed'])
-            before=path.read_bytes()
-            with self.assertRaises(FileExistsError):
-                e.run('routing',16,path,self.evaluation_registry(),suite='regression-r2')
-            self.assertEqual(before,path.read_bytes())
-
-    def test_holdout_frozen_gate_and_unresolved_unknown_project(self):
-        import commit_evaluation as e
-        registry=self.evaluation_registry();projects=natta.load_registry(registry)
-        corpus,control,_=e.controls('routing',projects,'holdout-r2')
-        self.assertEqual(len(corpus['cases']),8)
-        self.assertEqual(control['predeclared_acceptance'],{
-            'complete_cases':8,'provider_failures':0,'minimum_exact_accuracy':1.0,
-            'unsupported_rejection':1.0,'adversarial_rejection':1.0,
-            'accepted_unknown_capabilities':0,'accepted_unknown_projects':0})
-        with patch.object(provider,'run_provider',return_value='{"choice":"commit"}'):
-            result=natta.prepare_route(corpus['cases'][-1]['request'],natta.make_parser(),registry)
-        self.assertEqual(e.compact_route(result),corpus['cases'][-1]['expected'])
-        self.assertFalse(result.execution_policy.eligible)
-        original=json.loads((natta.ROOT/'evaluation/commit-routing-v2-corpus.json').read_text())
-        self.assertFalse({c['request'] for c in corpus['cases']} & {c['request'] for c in original['cases']})
-        with self.assertRaises(ValueError):e.controls('planner',projects,'holdout-r2')
-
-    def test_holdout_unsafe_false_positive_fails_gate(self):
-        import commit_evaluation as e
-        registry=self.evaluation_registry()
-        with patch.object(provider,'run_provider',return_value='{"choice":"commit"}'):
-            result=e.run('routing',8,self.root/'unsafe-holdout.json',registry,suite='holdout-r2')
-        self.assertFalse(result['assessment']['passed'])
-        self.assertEqual(result['metrics']['unsupported_rejection'],0)
-        self.assertEqual(result['metrics']['adversarial_rejection'],0)
-
     def test_undecided_commit_target_is_locally_ambiguous_not_no_match(self):
-        import commit_evaluation as e
-        registry=self.evaluation_registry();projects=natta.load_registry(registry)
-        corpus,_,_=e.controls('routing',projects,'r1-regression-r2')
-        case=corpus['cases'][3]
-        self.assertEqual(case['request'],'Make a commit for Example or Sample; I have not picked one.')
-        with patch.object(provider,'run_provider',return_value='{"choice":"commit"}') as runner, \
+        registry=self.evaluation_registry()
+        corpus=json.loads((natta.ROOT/'evaluation/commit-routing-holdout-r1-corpus.json').read_text())
+        case=next(c for c in corpus['cases'] if c['request']=='Make a commit for Example or Sample; I have not picked one.')
+        with s1fx.ask(s1fx.route('commit')) as runner, \
              patch.object(commits,'create',side_effect=AssertionError('commit')), \
              patch.object(runtime_effects,'capture_commit',side_effect=AssertionError('snapshot')):
             result=natta.prepare_route(case['request'],natta.make_parser(),registry)
-        self.assertEqual(e.compact_route(result),case['expected'])
+        self.assertEqual(self.compact_route(result),case['expected'])
         self.assertEqual(result.resolution_error,'ambiguous_project')
         self.assertFalse(result.executed)
         self.assertFalse(result.execution_policy.eligible)
         self.assertEqual(runner.call_count,1)
 
-    def test_previous_r1_controls_fail_closed_and_r2_words_are_new(self):
-        import commit_evaluation as e
-        projects=natta.load_registry(self.evaluation_registry())
-        for suite in ('regression','holdout'):
-            with self.assertRaises(ValueError):e.controls('routing',projects,suite)
-        fresh,control,_=e.controls('routing',projects,'holdout-r2')
-        old=[json.loads((natta.ROOT/'evaluation'/name).read_text()) for name in
-             ('commit-routing-v2-corpus.json','commit-routing-holdout-r1-corpus.json')]
-        self.assertFalse({c['request'] for c in fresh['cases']} &
-                         {c['request'] for corpus in old for c in corpus['cases']})
-        self.assertEqual(control['predeclared_acceptance']['minimum_exact_accuracy'],1.0)
-        self.assertIn('undecided target',provider.production_definitions(routing_revision=True)['concise']['commit'])
-
-    def test_historical_and_current_provider_domains_remain_separate(self):
-        import planner_provider as historical
-        self.assertNotIn('commit',provider.ROUTING_IDS);self.assertIn('commit',provider.PRODUCTION_IDS)
-        self.assertNotIn('commit',provider.definitions()['concise'])
-        self.assertIn('commit',provider.production_definitions()['concise'])
-        self.assertNotIn('commit',historical.ALLOWED);self.assertIn('commit',planner.ALLOWED)
-        candidate={'status':'planned','steps':[{'capability':'commit','project':'example','arguments':{}}]}
-        old=planning.validate(candidate,natta.make_parser(),[self.project],natta.handler_bindings(),provider_mode=historical)
-        self.assertEqual(old.error,'unsupported_capability')
-        self.assertEqual(historical.VERSION,'phase8a-v1');self.assertEqual(planner.VERSION,'phase8a-commit-v2')
+    def test_historical_and_current_definition_domains_remain_separate(self):
+        self.assertNotIn('commit',semantic_catalog.ROUTING_IDS);self.assertIn('commit',semantic_catalog.PRODUCTION_IDS)
+        self.assertNotIn('commit',semantic_catalog.definitions()['concise'])
+        self.assertIn('commit',semantic_catalog.production_definitions()['concise'])
+        self.assertIn('commit',planning.ALLOWED)
+        self.assertIn('undecided target',semantic_catalog.production_definitions(routing_revision=True)['concise']['commit'])
 
     def test_historical_frozen_artifacts_remain_byte_identical(self):
         import hashlib
@@ -460,14 +363,14 @@ class CommitTests(unittest.TestCase):
         self.assertEqual(invoked.call_count,3)
         self.assertTrue(all(call.args[1]=='commit' for call in invoked.call_args_list))
         self.assertIn('"disposable_acceptance": "PASS"',out.getvalue())
-        self.assertIn('"luna_calls": 0',out.getvalue())
+        self.assertIn('"provider_calls": 0',out.getvalue())
         self.assertIn('Disposable fixture cleaned.',out.getvalue())
         with self.assertRaises(ValueError):host.confirm(self.root/'missing.json',False)
 
     def test_doctor_commit_parameter_requirements_fail_closed_no_mutation(self):
         import argparse
-        parser=natta.make_parser();ids=provider.authoritative_ids()-{'codex','route'}
-        with patch.object(commits,'create',side_effect=AssertionError('commit')),patch.object(provider,'run_provider',side_effect=AssertionError('Luna')):
+        parser=natta.make_parser();ids=semantic_catalog.executable_ids()
+        with patch.object(commits,'create',side_effect=AssertionError('commit')),s1fx.forbidden():
             self.assertTrue(all(ok for ok,_ in semantic_execution.doctor_checks(ids,natta.handler_bindings(),parser)))
             commands=next(a for a in parser._actions if isinstance(a,argparse._SubParsersAction))
             next(a for a in commands.choices['commit']._actions if a.dest=='project').required=False

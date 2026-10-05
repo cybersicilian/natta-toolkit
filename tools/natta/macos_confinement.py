@@ -332,7 +332,7 @@ sys.exit(1)
 
 
 def validate():
-    """Explicit zero-Luna disposable inspection validation. Never app workflows."""
+    """Explicit zero-provider disposable inspection validation. Never app workflows."""
     try:
         fingerprint=identity('inspection')
         target=record_path()

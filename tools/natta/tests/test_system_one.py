@@ -136,6 +136,13 @@ class JevTests(unittest.TestCase):
         with mock.patch.object(s1.urllib.request, 'urlopen', side_effect=[http_error(529), FakeResponse(json.dumps(jev_answer()).encode())]):
             self.assertEqual(self.backend().ask('x', {'capability': QUESTION})['capability'].choice, 'build')
 
+    def test_truncated_response_is_unreachable_not_an_exception(self):
+        import http.client
+        with mock.patch.object(s1.urllib.request, 'urlopen', side_effect=http.client.IncompleteRead(b'')), \
+                self.assertRaises(s1.ProviderError) as caught:
+            self.backend().ask('x', {'capability': QUESTION})
+        self.assertEqual(caught.exception.code, 'unreachable')
+
     def test_network_failures(self):
         for error, code in ((urllib.error.URLError('down'), 'unreachable'), (TimeoutError(), 'timeout')):
             with self.subTest(code=code), mock.patch.object(s1.urllib.request, 'urlopen', side_effect=error), \
@@ -182,8 +189,8 @@ class OllamaTests(unittest.TestCase):
         self.assertEqual(answer.choice, 'build')
         self.assertAlmostEqual(sum(answer.probabilities.values()), 1)
         self.assertAlmostEqual(answer.probabilities['build'], 0.8 / 0.98)
-        self.assertGreater(answer.confidence, 0.3)
-        self.assertLess(answer.confidence, 1)
+        # Same statistic as Jev: (n * p_max - 1) / (n - 1).
+        self.assertAlmostEqual(answer.confidence, (3 * 0.8 / 0.98 - 1) / 2)
 
     def test_bad_outputs_fail_closed(self):
         for content in ('B', '{"choice":"D"}', '{"choice":"B","why":"x"}', '{"choice":"B","choice":"A"}', None, '[]'):
@@ -207,12 +214,17 @@ class GateTests(unittest.TestCase):
     def test_threshold(self):
         self.assertTrue(s1.meets_threshold(s1.ChoiceAnswer('a', confidence=0.6), 0.5))
         self.assertFalse(s1.meets_threshold(s1.ChoiceAnswer('a', confidence=0.4), 0.5))
+        self.assertTrue(s1.meets_threshold(s1.ChoiceAnswer('a', confidence=0.5), 0.5))
+        # Missing confidence (Ollama without logprobs) never passes, even at zero.
         self.assertFalse(s1.meets_threshold(s1.ChoiceAnswer('a'), 0.5))
-        self.assertTrue(s1.meets_threshold(s1.ChoiceAnswer('a'), 0))
+        self.assertFalse(s1.meets_threshold(s1.ChoiceAnswer('a'), 0))
 
-    def test_concentration(self):
-        self.assertAlmostEqual(s1.concentration({'a': 1.0, 'b': 0.0}), 1)
-        self.assertAlmostEqual(s1.concentration({'a': 0.5, 'b': 0.5}), 0)
+    def test_choice_confidence_matches_typesafe_formula(self):
+        self.assertAlmostEqual(s1.choice_confidence({'a': 1.0, 'b': 0.0}), 1)
+        self.assertAlmostEqual(s1.choice_confidence({'a': 0.5, 'b': 0.5}), 0)
+        # Documented example: (0.6, 0.3, 0.1) and (0.6, 0.2, 0.2) are both 0.4.
+        self.assertAlmostEqual(s1.choice_confidence({'a': 0.6, 'b': 0.3, 'c': 0.1}), 0.4)
+        self.assertAlmostEqual(s1.choice_confidence({'a': 0.6, 'b': 0.2, 'c': 0.2}), 0.4)
 
     def test_question_validation(self):
         for options in ((), (('a', None),), (('a', None), ('a', None)), (('', None), ('b', None))):
@@ -224,6 +236,77 @@ class GateTests(unittest.TestCase):
     def test_backend_selection(self):
         self.assertIsInstance(s1.backend_for(s1.Config()), s1.JevBackend)
         self.assertIsInstance(s1.backend_for(s1.Config(backend='ollama')), s1.OllamaBackend)
+
+
+class AskTests(unittest.TestCase):
+    def test_jev_judgment_records_served_model_and_one_request(self):
+        config = s1.Config()
+        with respond({**jev_answer(), 'model': 'jev-1.13.0'}):
+            judgment = s1.ask(config, 'x', {'capability': QUESTION}, environ={'TYPESAFE_API_KEY': 'k'})
+        self.assertEqual((judgment.backend, judgment.model, judgment.requests), ('jev', 'jev-1.13.0', 1))
+        self.assertEqual(judgment.answers['capability'].choice, 'build')
+
+    def test_unrecognized_served_model_falls_back_to_configured_name(self):
+        with respond({**jev_answer(), 'model': 'bad model\nname'}):
+            judgment = s1.ask(s1.Config(), 'x', {'capability': QUESTION}, environ={'TYPESAFE_API_KEY': 'k'})
+        self.assertEqual(judgment.model, 'jev-latest')
+
+    def test_ollama_counts_one_request_per_question(self):
+        config = s1.Config(backend='ollama')
+        with respond(ollama_reply('{"choice":"A"}')) as urlopen:
+            # urlopen is a single fake response; reuse is fine for counting calls.
+            urlopen.side_effect = lambda *a, **k: FakeResponse(json.dumps(ollama_reply('{"choice":"A"}')).encode())
+            judgment = s1.ask(config, 'x', {'a': QUESTION, 'b': QUESTION})
+        self.assertEqual((judgment.backend, judgment.requests, urlopen.call_count), ('ollama', 2, 2))
+
+    def test_backend_answers_are_revalidated(self):
+        class Rogue:
+            requests, served_model = 1, None
+            def __init__(self, answers): self.answers = answers
+            def ask(self, state, questions): return self.answers
+        for answers in ({}, {'capability': s1.ChoiceAnswer('rm -rf /')}, {'capability': 'build'},
+                        {'capability': s1.ChoiceAnswer('build'), 'extra': s1.ChoiceAnswer('build')}):
+            with self.subTest(answers=answers), mock.patch.object(s1, 'backend_for', return_value=Rogue(answers)), \
+                    self.assertRaises(s1.ProviderError) as caught:
+                s1.ask(s1.Config(), 'x', {'capability': QUESTION})
+            self.assertEqual(caught.exception.code, 'invalid_response')
+
+    def test_questions_must_be_typed(self):
+        for questions in ({}, {'q': {'type': 'choice'}}, [QUESTION]):
+            with self.subTest(questions=questions), self.assertRaises(s1.ProviderError):
+                s1.ask(s1.Config(), 'x', questions)
+
+
+class DoctorTests(unittest.TestCase):
+    def rows(self, environ, get_json=None):
+        environ = {'NATTA_SYSTEM_ONE_CONFIG': '/nonexistent/system_one.toml', **environ}
+        fail = lambda *a: (_ for _ in ()).throw(AssertionError('network'))
+        return s1.doctor_checks(environ, get_json or fail)
+
+    def test_jev_reports_key_presence_never_value_and_no_network(self):
+        rows = self.rows({'TYPESAFE_API_KEY': 'sk-secret-value'})
+        self.assertTrue(all(ok for ok, _ in rows))
+        self.assertNotIn('sk-secret-value', json.dumps(rows))
+        self.assertIn('backend=jev model=jev-latest min_confidence=0.50', rows[0][1])
+        self.assertEqual(self.rows({})[1], (False, 'TypeSafe API key missing in TYPESAFE_API_KEY; service/auth not probed'))
+
+    def test_ollama_reachability_and_model_presence_without_inference(self):
+        calls = []
+        def get_json(url, timeout):
+            calls.append(url)
+            return {'version': '0.12.11'} if url.endswith('/api/version') else {'models': [{'name': 'qwen3:4b'}]}
+        rows = self.rows({'NATTA_SYSTEM_ONE_BACKEND': 'ollama'}, get_json)
+        self.assertEqual(calls, ['http://127.0.0.1:11434/api/version', 'http://127.0.0.1:11434/api/tags'])
+        self.assertTrue(all(ok for ok, _ in rows))
+        missing = self.rows({'NATTA_SYSTEM_ONE_BACKEND': 'ollama', 'NATTA_OLLAMA_MODEL': 'other'}, get_json)
+        self.assertEqual(missing[-1], (False, 'Ollama model other not installed'))
+        def down(url, timeout): raise urllib.error.URLError('refused')
+        self.assertFalse(self.rows({'NATTA_SYSTEM_ONE_BACKEND': 'ollama'}, down)[-1][0])
+
+    def test_invalid_configuration_is_one_unavailable_row(self):
+        rows = self.rows({'NATTA_SYSTEM_ONE_BACKEND': 'codex'})
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0][0])
 
 
 if __name__ == '__main__':

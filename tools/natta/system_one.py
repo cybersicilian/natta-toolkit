@@ -12,6 +12,7 @@ command, path, flag or argument: only one option ID from a caller-supplied set.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import http.client
 import json
 import math
 import os
@@ -35,6 +36,7 @@ DEFAULT_MIN_CONFIDENCE = 0.5
 LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 PROBABILITY_TOLERANCE = 0.02
 RETRYABLE_STATUS = frozenset((429, 529))
+MODEL_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}')
 
 # Bounded failure codes. Raw provider messages are never surfaced.
 ERROR_CODES = frozenset((
@@ -192,8 +194,7 @@ def load_config(path=None, environ=None):
     if not isinstance(disable_thinking, bool) or isinstance(top, bool) or not isinstance(top, int) or not 2 <= top <= 20:
         raise ProviderError('config_invalid')
     ollama = OllamaConfig(
-        host=_http_url(environ.get('NATTA_OLLAMA_HOST') or environ.get('OLLAMA_HOST_URL')
-                       or ollama_data.get('host', OLLAMA_DEFAULT_HOST)),
+        host=_http_url(environ.get('NATTA_OLLAMA_HOST') or ollama_data.get('host', OLLAMA_DEFAULT_HOST)),
         model=_text(environ.get('NATTA_OLLAMA_MODEL') or ollama_data.get('model', OLLAMA_DEFAULT_MODEL), 'model'),
         timeout_seconds=_number(ollama_data.get('timeout_seconds', 120), 1, 1800),
         disable_thinking=disable_thinking,
@@ -225,7 +226,7 @@ def _post_json(url, body, headers, timeout, retries=0, sleep=time.sleep):
                                  429: 'rate_limited', 529: 'overloaded'}.get(status, 'rejected')) from None
         except TimeoutError:
             raise ProviderError('timeout') from None
-        except (urllib.error.URLError, OSError):
+        except (urllib.error.URLError, OSError, http.client.HTTPException):
             raise ProviderError('unreachable') from None
     try:
         return json.loads(raw, object_pairs_hook=_reject_duplicates)
@@ -263,13 +264,16 @@ def _validated_answer(raw, question):
     return ChoiceAnswer(choice, MappingProxyType(ordered), float(confidence))
 
 
-def concentration(probabilities):
-    """1 - normalized entropy: 1 when all mass is on one option, 0 when uniform."""
-    values = [p for p in probabilities.values() if p > 0]
-    if len(probabilities) < 2:
+def choice_confidence(probabilities):
+    """TypeSafe's Choice confidence: (p_max - 1/n) / (1 - 1/n), clamped to [0, 1].
+
+    Ollama answers use the same statistic as Jev so one min_confidence threshold
+    means the same thing on both backends. See https://docs.typesafe.ai/confidence.
+    """
+    n = len(probabilities)
+    if n < 2:
         return 1.0
-    entropy = -sum(p * math.log(p) for p in values)
-    return max(0.0, min(1.0, 1 - entropy / math.log(len(probabilities))))
+    return max(0.0, min(1.0, (n * max(probabilities.values()) - 1) / (n - 1)))
 
 
 # ---------------------------------------------------------------- backends
@@ -281,6 +285,7 @@ class JevBackend:
     def __init__(self, config: JevConfig, environ=None, sleep=time.sleep):
         self.config, self.sleep = config, sleep
         self.environ = os.environ if environ is None else environ
+        self.requests, self.served_model = 0, None
 
     def ask(self, state, questions):
         key = self.environ.get(self.config.api_key_env, '').strip()
@@ -290,9 +295,13 @@ class JevBackend:
             qid: {'type': 'choice', 'instructions': question.instructions,
                   'criteria': {name: description for name, description in question.options}}
             for qid, question in questions.items()}}
+        self.requests += 1
         data = _post_json(self.config.endpoint, body, {'Authorization': 'Bearer ' + key},
                           self.config.timeout_seconds, self.config.max_retries, self.sleep)
         answers = data.get('answers') if isinstance(data, dict) else None
+        served = data.get('model') if isinstance(data, dict) else None
+        # The versioned ID that answered (an alias such as jev-latest can move).
+        self.served_model = served if isinstance(served, str) and MODEL_ID.fullmatch(served) else None
         if not isinstance(answers, dict) or set(answers) != set(questions):
             raise ProviderError('invalid_response')
         return {qid: _validated_answer(answers[qid], question) for qid, question in questions.items()}
@@ -349,6 +358,7 @@ class OllamaBackend:
 
     def __init__(self, config: OllamaConfig):
         self.config = config
+        self.requests, self.served_model = 0, None
 
     def ask(self, state, questions):
         return {qid: self._ask_one(state, question) for qid, question in questions.items()}
@@ -366,6 +376,7 @@ class OllamaBackend:
                 'logprobs': True, 'top_logprobs': self.config.top_logprobs}
         if self.config.disable_thinking:
             body['think'] = False
+        self.requests += 1
         data = _post_json(self.config.host + '/api/chat', body, {}, self.config.timeout_seconds)
         message = data.get('message') if isinstance(data, dict) else None
         content = message.get('content') if isinstance(message, dict) else None
@@ -385,7 +396,7 @@ class OllamaBackend:
         if probabilities[by_letter[chosen]] < top - 1e-9:
             # Greedy decoding picked a letter that is not the modal one: trust neither.
             return ChoiceAnswer(by_letter[chosen])
-        return ChoiceAnswer(by_letter[chosen], MappingProxyType(probabilities), concentration(probabilities))
+        return ChoiceAnswer(by_letter[chosen], MappingProxyType(probabilities), choice_confidence(probabilities))
 
 
 def backend_for(config: Config, environ=None):
@@ -399,7 +410,97 @@ def backend_for(config: Config, environ=None):
 # ---------------------------------------------------------------- confidence gate
 
 def meets_threshold(answer: ChoiceAnswer, min_confidence: float) -> bool:
-    """Missing confidence only passes an explicit threshold of zero."""
+    """Missing confidence never passes, whatever the threshold."""
     if answer.confidence is None:
-        return min_confidence <= 0
+        return False
     return answer.confidence >= min_confidence
+
+
+# ---------------------------------------------------------------- one judgment
+
+# System One failure codes as exposed in route/plan results. Local configuration
+# problems are reported separately by callers (routing_error / invalid_plan).
+RESULT_ERRORS = MappingProxyType({
+    'config_invalid': 'provider_configuration_invalid',
+    'credentials_missing': 'credentials_missing',
+    'unreachable': 'provider_unavailable',
+    'timeout': 'provider_timeout',
+    'rate_limited': 'rate_limited',
+    'overloaded': 'overloaded',
+    'rejected': 'provider_failure',
+    'invalid_response': 'malformed_output'})
+
+
+@dataclass(frozen=True)
+class Judgment:
+    """Validated answers to one batch of questions plus non-secret provenance."""
+    answers: MappingProxyType
+    backend: str
+    model: str
+    requests: int
+    seconds: float
+
+
+def ask(config: Config, state, questions, environ=None):
+    """Ask one batch of Choice questions on the configured backend. No fallback.
+
+    Raises ProviderError with a bounded code. Every answer is revalidated here
+    against its own question, whichever backend produced it.
+    """
+    if (not isinstance(questions, dict) or not questions
+            or any(not isinstance(q, ChoiceQuestion) for q in questions.values())):
+        raise ProviderError('config_invalid')
+    backend = backend_for(config, environ)
+    started = time.perf_counter()
+    answers = backend.ask(state, questions)
+    if not isinstance(answers, dict) or set(answers) != set(questions):
+        raise ProviderError('invalid_response')
+    for qid, answer in answers.items():
+        if not isinstance(answer, ChoiceAnswer) or answer.choice not in questions[qid].ids:
+            raise ProviderError('invalid_response')
+    return Judgment(MappingProxyType(dict(answers)), config.backend,
+                    backend.served_model or config.model, backend.requests,
+                    time.perf_counter() - started)
+
+
+# ---------------------------------------------------------------- doctor
+
+def _get_json(url, timeout):
+    request = urllib.request.Request(url, method='GET', headers={
+        'Accept': 'application/json', 'User-Agent': 'natta-toolkit'})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read(1_000_000))
+
+
+def doctor_checks(environ=None, get_json=_get_json):
+    """Optional readiness rows. Never makes an inference request.
+
+    Jev: reports whether the API key variable is set (never its value); the
+    TypeSafe service, authentication and rate limits are not probed. Ollama:
+    reads the server version and installed model list from the configured host.
+    """
+    environ = os.environ if environ is None else environ
+    try:
+        config = load_config(environ=environ)
+    except ProviderError:
+        return [(False, 'System One configuration invalid; see NATTA_SYSTEM_ONE_* and ~/.config/natta/system_one.toml')]
+    rows = [(True, f'System One: backend={config.backend} model={config.model} '
+                   f'min_confidence={config.min_confidence:.2f}')]
+    if config.backend == 'jev':
+        present = bool(environ.get(config.jev.api_key_env, '').strip())
+        rows.append((present, f'TypeSafe API key {"present" if present else "missing"} in '
+                              f'{config.jev.api_key_env}; service/auth not probed'))
+        return rows
+    host = config.ollama.host
+    try:
+        version = get_json(host + '/api/version', 3)
+        tags = get_json(host + '/api/tags', 3)
+        names = {m.get('name') for m in tags.get('models', []) if isinstance(m, dict)}
+    except (OSError, ValueError, AttributeError, TypeError, urllib.error.URLError, http.client.HTTPException):
+        return [*rows, (False, f'Ollama unreachable at {host}; no inference attempted')]
+    label = version.get('version') if isinstance(version, dict) else None
+    label = label if isinstance(label, str) and MODEL_ID.fullmatch(label) else 'unknown'
+    rows.append((True, f'Ollama reachable at {host} (version {label}); logprobs support not probed'))
+    installed = config.ollama.model in names or config.ollama.model + ':latest' in names
+    rows.append((installed, f'Ollama model {config.ollama.model} {"installed" if installed else "not installed"}'))
+    return rows

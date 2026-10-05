@@ -57,7 +57,7 @@ def fixture():
         if clean['status']!='no_changes' or clean['committed']:raise ValueError('Clean handling failed')
         print(json.dumps({'disposable_acceptance':'PASS','default_commit':first['commit_hash'],
             'custom_commit':second['commit_hash'],'effect_verification':second['effect_verification'],
-            'pushed':False,'luna_calls':0},indent=2))
+            'pushed':False,'provider_calls':0},indent=2))
     print('Disposable fixture cleaned.')
 
 

@@ -1,4 +1,4 @@
-"""Production selection boundaries; all Codex model calls and CLI probes mocked."""
+"""Production selection boundaries; every System One call is mocked."""
 import ast
 import contextlib
 from dataclasses import FrozenInstanceError
@@ -6,55 +6,50 @@ import io
 import json
 import os
 from pathlib import Path
-import subprocess
-import tempfile
-from types import SimpleNamespace
+from types import MappingProxyType
 import unittest
 from unittest.mock import patch
+import urllib.error
 
 import natta
 import routing
-import router_codex as p
+import semantic_catalog as catalog
+import system_one
+import system_one_fixtures as s1fx
 
 
-def events(choice='build', extra=()):
-    return '\n'.join(json.dumps(e) for e in [
-        {'type':'thread.started'}, {'type':'turn.started'}, *extra,
-        {'type':'item.completed','item':{'type':'agent_message','text':json.dumps({'choice':choice})}},
-        {'type':'turn.completed'}])
+class FakeResponse(io.BytesIO):
+    def __enter__(self): return self
+    def __exit__(self, *exc): return False
+
+
+def jev_reply(choice='build', confidence=0.9):
+    ids = catalog.TOOLKIT_IDS
+    rest = (1 - 0.92) / (len(ids) - 1)
+    probabilities = {name: 0.92 if name == choice else rest for name in ids}
+    return {'model': 'jev-1.13.0', 'usage': {'input_tokens': 1, 'output_tokens': 1},
+            'answers': {'capability': {'type': 'choice', 'choice': choice,
+                                       'probabilities': probabilities, 'confidence': confidence}}}
 
 
 class RouteTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.path = Path(self.tmp.name).resolve()/'router'
-        for target,value in (('workspace_path',self.path),('probe_cli','codex-cli 0.160.0')):
-            mock = patch.object(p,target,return_value=value)
-            mock.start(); self.addCleanup(mock.stop)
-        self.calls = []
-
     def invoke(self,*args):
         out,err = io.StringIO(),io.StringIO()
         with contextlib.redirect_stdout(out),contextlib.redirect_stderr(err): code = natta.main(list(args))
         return code,out.getvalue(),err.getvalue()
-
-    def runner(self,value):
-        def run(argv,cwd,text,timeout):
-            self.calls.append((argv,cwd,text,timeout))
-            return p.final_message(value)
-        return run
 
     def test_parser_json_and_no_execution_options(self):
         for args in (['route','--json','Build Example'],['route','Build Example','--json']):
             parsed=natta.make_parser().parse_args(args)
             self.assertEqual((parsed.command,parsed.request,parsed.json),('route','Build Example',True))
             self.assertFalse(hasattr(parsed,'project'))
-        for flag in ('--model','--level','--log','--verbose','--execute'):
+        for flag in ('--model','--level','--log','--verbose','--execute','--backend'):
             with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
                 natta.make_parser().parse_args(['route','request',flag,'x'])
 
     def test_build_route_never_calls_build_or_project_inspection(self):
-        with patch.object(p,'run_provider',side_effect=self.runner(events())), \
+        fake=s1fx.route('build')
+        with s1fx.ask(fake), \
              patch.object(natta,'load_registry',return_value=[natta.Project('example', ('example-app',), 'Example App', Path('/uninspected/example'), 'generic-git', {})]), \
              patch.object(natta,'lookup',side_effect=AssertionError('lookup')), \
              patch.object(natta,'git_state',side_effect=AssertionError('app inspection')), \
@@ -70,165 +65,163 @@ class RouteTests(unittest.TestCase):
         decision = result.pop('execution_policy')
         self.assertTrue(decision['eligible'])
         self.assertEqual(decision['authorization'], 'explicit')
-        self.assertEqual(result,{'status':'matched','capability':'build','provider':'gpt-6-luna',
+        probabilities = result.pop('probabilities')
+        self.assertEqual(set(probabilities), set(catalog.TOOLKIT_IDS))
+        self.assertAlmostEqual(sum(probabilities.values()), 1)
+        self.assertEqual(max(probabilities, key=probabilities.get), 'build')
+        self.assertEqual(result,{'status':'matched','capability':'build','provider':'system-one',
+            'backend':'jev','model':'jev-latest','min_confidence':0.5,'confidence':0.95,'reason':None,
             'executed':False,'arguments_resolved':True,'error':None,'project':'example',
             'arguments':{},'missing_arguments':[],'resolution_error':None})
-        self.assertEqual(len(self.calls),1)
+        self.assertEqual(fake.call_count,1)
 
     def test_all_known_choices_and_no_match(self):
-        for choice in p.TOOLKIT_IDS:
-            with patch.object(p,'run_provider',side_effect=self.runner(events(choice))): result=routing.select('request')
+        for choice in catalog.TOOLKIT_IDS:
+            with s1fx.ask(s1fx.route(choice)): result=routing.select('request')
             self.assertEqual(result.capability,choice)
             self.assertEqual(result.status,'no_match' if choice=='no_match' else 'matched')
             self.assertIs(result.executed,False); self.assertIs(result.arguments_resolved,False)
-        self.assertEqual(len(self.calls),len(p.TOOLKIT_IDS))
+            self.assertIsNone(result.reason)
 
     def test_human_no_match_output_exit_zero(self):
-        with patch.object(p,'run_provider',side_effect=self.runner(events('no_match'))):
+        with s1fx.ask(s1fx.route('no_match')):
             code,out,err=self.invoke('route','Commit and push Example')
         self.assertEqual((code,err),(0,''))
-        self.assertEqual(out,'Route\n  status: no_match\n  capability: no_match\n  project: none\n  provider: gpt-6-luna\n  resolved: no\n  executed: no\n  authorization: forbidden\n  policy eligible: no\n  policy reason: no_match\n')
+        self.assertEqual(out,'Route\n  status: no_match\n  capability: no_match\n  project: none\n'
+            '  provider: system-one (jev jev-latest)\n  confidence: 0.95 (minimum 0.50)\n'
+            '  resolved: no\n  executed: no\n  authorization: forbidden\n  policy eligible: no\n  policy reason: no_match\n')
 
-    def test_unknown_choices_and_arbitrary_arguments_fail_closed(self):
+    def test_low_or_missing_confidence_is_non_executing_no_match(self):
+        for confidence in (0.49, 0.0, None):
+            with self.subTest(confidence=confidence), s1fx.ask(s1fx.route('build', confidence)):
+                code,out,err=self.invoke('route','--json','Build Example')
+            result=json.loads(out)
+            self.assertEqual((code,result['status'],result['capability'],result['reason']),(0,'no_match','no_match','low_confidence'))
+            self.assertEqual(result['confidence'],confidence)
+            self.assertEqual(result['execution_policy']['reason'],'no_match')
+            self.assertFalse(result['execution_policy']['eligible'])
+            self.assertIsNone(result['project'])
+            if confidence is None: self.assertIsNone(result['probabilities'])
+            else: self.assertEqual(max(result['probabilities'],key=result['probabilities'].get),'build')
+        with s1fx.ask(s1fx.route('build', 0.49)):
+            code,out,_=self.invoke('route','Build Example')
+        self.assertIn('  confidence: 0.49 (minimum 0.50)\n  reason: low_confidence\n',out)
+
+    def test_threshold_is_configurable_and_never_admits_missing_confidence(self):
+        with patch.dict(os.environ,{'NATTA_SYSTEM_ONE_MIN_CONFIDENCE':'0.8'}):
+            with s1fx.ask(s1fx.route('build',0.79)): self.assertEqual(routing.select('r').reason,'low_confidence')
+            with s1fx.ask(s1fx.route('build',0.8)): self.assertEqual(routing.select('r').status,'matched')
+        with patch.dict(os.environ,{'NATTA_SYSTEM_ONE_MIN_CONFIDENCE':'0'}), s1fx.ask(s1fx.route('build',None)):
+            self.assertEqual(routing.select('r').reason,'low_confidence')
+
+    def test_unknown_choices_fail_closed_at_routing_boundary(self):
+        # Even if a backend (or mock) bypasses ask()'s validation, routing revalidates.
         for choice in ('delete_everything','codex','route'):
-            with patch.object(p,'run_provider',side_effect=self.runner(events(choice))): result=routing.select('request')
+            judgment=system_one.Judgment(MappingProxyType({'capability':system_one.ChoiceAnswer(choice,None,1.0)}),'jev','m',1,0.0)
+            with patch.object(system_one,'ask',return_value=judgment): result=routing.select('request')
             self.assertEqual((result.status,result.error,result.capability),('provider_error','unknown_choice',None))
-        for text in ('garbage','{}','{"choice":"build","project":"example","level":2}',
-                     '{"choice":"build","arguments":["rm"]}','{"choice":"build","choice":"test"}'):
-            with patch.object(p,'run_provider',return_value=text): result=routing.select('request')
-            self.assertEqual(result.error,'malformed_output'); self.assertIs(result.executed,False)
-        answer={'status':'passed','selected_id':'build','error':None,'project':'example','arguments':['dangerous'],'reasoning':'PRIVATE'}
-        with patch.object(p.CodexDecision,'decide',return_value=answer): result=routing.select('request')
-        self.assertEqual(set(result.as_dict()),{'status','capability','provider','executed','arguments_resolved','error','project','arguments','missing_arguments','resolution_error','execution_policy'})
-        self.assertNotIn('PRIVATE',json.dumps(result.as_dict()))
-        with patch.object(p.CodexDecision,'decide',return_value={**answer,'selected_id':'unknown'}):
-            self.assertEqual(routing.select('request').error,'unknown_choice')
+        with s1fx.ask(s1fx.route('delete_everything')): result=routing.select('request')
+        self.assertEqual((result.status,result.error),('provider_error','malformed_output'))
+        self.assertEqual(set(result.as_dict()),{'status','capability','provider','executed','arguments_resolved','error','project',
+            'arguments','missing_arguments','resolution_error','execution_policy','backend','model','min_confidence',
+            'confidence','probabilities','reason'})
 
-    def test_failures_nonzero_no_fallback_retry_or_fabricated_no_match(self):
-        for error in routing.ERRORS:
-            with patch.object(p,'run_provider',side_effect=p.OutputFailure(error)) as run:
+    def test_failures_nonzero_bounded_codes_no_fallback_or_fabricated_no_match(self):
+        for code_name, expected in system_one.RESULT_ERRORS.items():
+            fake=s1fx.failing(code_name)
+            with s1fx.ask(fake):
                 code,out,err=self.invoke('route','--json','request')
-            run.assert_called_once(); result=json.loads(out)
-            self.assertEqual((code,err,result['status'],result['error']),(1,'','provider_error',error))
+            result=json.loads(out)
+            self.assertEqual(fake.call_count,1)
+            self.assertEqual((code,err,result['status'],result['error']),(1,'','provider_error',expected))
             self.assertIsNone(result['capability']); self.assertIs(result['executed'],False)
-        for failure in (FileNotFoundError('PRIVATE'),subprocess.CalledProcessError(1,'PRIVATE')):
-            with patch.object(p,'run_provider',side_effect=failure) as run: result=routing.select('request')
-            run.assert_called_once(); self.assertEqual(result.error,'provider_failure')
-            self.assertNotIn('PRIVATE',json.dumps(result.as_dict()))
 
-    def test_prohibited_items_unknown_events_fail_closed(self):
-        for item in ('error','command_execution','file_change','mcp_tool_call','web_search','unknown_item'):
-            for kind in ('item.started','item.updated','item.completed'):
-                stream=events(extra=[{'type':kind,'item':{'type':item,'payload':'PRIVATE'}}])
-                with patch.object(p,'run_provider',side_effect=self.runner(stream)): result=routing.select('request')
-                self.assertEqual(result.error,'boundary_violation'); self.assertIsNone(result.capability)
-                self.assertIs(result.executed,False)
-        for kind in ('unknown_event','item.future_action'):
-            with patch.object(p,'run_provider',side_effect=self.runner(events(extra=[{'type':kind}]))):
-                self.assertEqual(routing.select('request').error,'boundary_violation')
-        for kind in ('error','turn.failed'):
-            with patch.object(p,'run_provider',side_effect=self.runner(events(extra=[{'type':kind}]))):
-                self.assertEqual(routing.select('request').error,'provider_failure')
-
-    def test_exact_isolation_minimal_content_no_request_persistence(self):
+    def test_jev_http_request_carries_only_request_and_definitions(self):
         request='Build Example for the simulator'
-        with patch.object(p,'run_provider',side_effect=self.runner(events())): routing.select(request)
-        argv,cwd,text,timeout=self.calls[0]
-        self.assertEqual(argv[argv.index('--model')+1],'gpt-6-luna')
-        self.assertEqual((cwd,timeout),(self.path,120))
-        for flag in ('--ignore-user-config','--ignore-rules','--strict-config','--ephemeral','--json','--no-daemon','--output-schema'): self.assertIn(flag,argv)
-        pairs=list(zip(argv,argv[1:]))
-        for feature in p.DISABLED: self.assertIn(('--disable',feature),pairs)
-        for pair in (('--enable','skip_host_skill_discovery'),('--sandbox','read-only'),('-a','never'),
-                     ('-c','web_search="disabled"'),('-c','shell_environment_policy.inherit="none"'),
-                     ('-c','suppress_unstable_features_warning=true'),('-c','project_doc_max_bytes=0')): self.assertIn(pair,pairs)
-        self.assertIn(json.dumps(request),text)
-        for forbidden in ('expected_choice','projects.toml',str(natta.WORKSPACE_ROOT),os.environ.get('HOME','/fixture/private')): self.assertNotIn(forbidden,text)
-        candidates=json.loads((self.path/'capabilities.json').read_text())
-        self.assertEqual([c['id'] for c in candidates],list(p.TOOLKIT_IDS))
-        self.assertEqual({c['id']:c['description'] for c in candidates},p.toolkit_definitions(routing_revision=True)['concise'])
-        self.assertEqual({f.name for f in self.path.iterdir()},p.FILES)
-        self.assertTrue(all(request not in f.read_text() for f in self.path.iterdir()))
+        env={'TYPESAFE_API_KEY':'sk-test-secret'}
+        with patch.dict(os.environ,env), patch.object(system_one.urllib.request,'urlopen',
+                return_value=FakeResponse(json.dumps(jev_reply()).encode())) as urlopen:
+            result=routing.select(request)
+        self.assertEqual((result.status,result.capability,result.model,result.confidence),('matched','build','jev-1.13.0',0.9))
+        self.assertEqual(urlopen.call_count,1)
+        sent=urlopen.call_args.args[0]
+        self.assertEqual(sent.full_url,'https://api.typesafe.ai/v1/systemone')
+        self.assertEqual(sent.get_header('Authorization'),'Bearer sk-test-secret')
+        body=json.loads(sent.data)
+        self.assertEqual(set(body),{'state','model','questions'})
+        self.assertEqual((body['state'],body['model'],list(body['questions'])),({'request':request},'jev-latest',['capability']))
+        asked=body['questions']['capability']
+        self.assertEqual(asked['type'],'choice')
+        self.assertEqual(asked['criteria'],dict(catalog.routing_options()))
+        self.assertEqual(list(asked['criteria']),list(catalog.TOOLKIT_IDS))
+        self.assertIn(catalog.testflight_extension()['policy'],asked['instructions'])
+        for forbidden in ('projects.toml',str(natta.WORKSPACE_ROOT),str(Path.home()),'sk-test-secret'):
+            self.assertNotIn(forbidden,json.dumps(body))
+        self.assertNotIn('sk-test-secret',json.dumps(result.as_dict()))
 
-    def test_missing_stale_regeneration_private_permissions(self):
-        with patch.object(p,'run_provider',side_effect=self.runner(events())):
-            self.assertEqual(routing.select('request').status,'matched')
-            (self.path/'AGENTS.md').write_text('stale'); (self.path/'capabilities.json').chmod(0o644); self.path.chmod(0o755)
-            self.assertEqual(routing.select('request').status,'matched')
-        self.assertEqual(self.path.stat().st_mode & 0o777,0o700)
-        self.assertTrue(all(f.stat().st_mode & 0o777==0o600 for f in self.path.iterdir()))
-        p.validate_workspace(self.path,p.workspace_contents('concise',p.TOOLKIT_IDS))
+    def test_jev_failure_never_falls_back_to_ollama(self):
+        error=urllib.error.HTTPError('https://x',500,'err',{},io.BytesIO(b'PRIVATE'))
+        with patch.dict(os.environ,{'TYPESAFE_API_KEY':'k'}), patch.object(system_one.urllib.request,'urlopen',side_effect=error) as urlopen:
+            result=routing.select('Build Example')
+        self.assertEqual((result.status,result.error,urlopen.call_count),('provider_error','provider_failure',1))
+        self.assertEqual(urlopen.call_args.args[0].full_url,'https://api.typesafe.ai/v1/systemone')
+        self.assertNotIn('PRIVATE',json.dumps(result.as_dict()))
+        with patch.dict(os.environ,{},clear=False), patch.object(system_one.urllib.request,'urlopen',side_effect=AssertionError('network')):
+            os.environ.pop('TYPESAFE_API_KEY',None)
+            self.assertEqual(routing.select('Build Example').error,'credentials_missing')
 
-    def test_unsafe_workspace_and_provider_mutation_rejected(self):
-        p.generate(self.path,'concise',p.TOOLKIT_IDS)
-        extra=self.path/'extra'; extra.write_text('keep')
-        with patch.object(p,'run_provider',side_effect=AssertionError('model call')): result=routing.select('request')
-        self.assertEqual(result.status,'routing_error'); self.assertEqual(extra.read_text(),'keep'); extra.unlink()
-        file=self.path/'AGENTS.md'; file.unlink(); file.symlink_to(p.DEFINITIONS)
-        with patch.object(p,'run_provider',side_effect=AssertionError('model call')): self.assertEqual(routing.select('request').status,'routing_error')
-        file.unlink(); file.write_text('restored ordinary file'); p.generate(self.path,'concise',p.TOOLKIT_IDS)
-        def mutate(*args):
-            (self.path/'AGENTS.md').write_text('tampered'); return '{"choice":"build"}'
-        with patch.object(p,'run_provider',side_effect=mutate): result=routing.select('request')
-        self.assertEqual(result.status,'routing_error'); self.assertIsNone(result.capability); self.assertIs(result.executed,False)
+    def test_ollama_backend_is_selected_by_configuration_only(self):
+        reply={'message':{'role':'assistant','content':'{"choice":"F"}'}}
+        with patch.dict(os.environ,{'NATTA_SYSTEM_ONE_BACKEND':'ollama','NATTA_OLLAMA_MODEL':'fixture:1b'}), \
+             patch.object(system_one.urllib.request,'urlopen',return_value=FakeResponse(json.dumps(reply).encode())) as urlopen:
+            result=routing.select('Build Example')
+        # Without logprobs there is no confidence, so nothing passes the gate.
+        self.assertEqual((result.status,result.reason,result.backend,result.model,result.confidence),
+                         ('no_match','low_confidence','ollama','fixture:1b',None))
+        self.assertEqual(urlopen.call_args.args[0].full_url,'http://127.0.0.1:11434/api/chat')
+        self.assertEqual(json.loads(urlopen.call_args.args[0].data)['model'],'fixture:1b')
 
-    def test_invalid_request_cli_failures_zero_model_calls(self):
-        with patch.object(p,'run_provider',side_effect=AssertionError('model call')):
+    def test_invalid_request_configuration_and_definitions_zero_model_calls(self):
+        with s1fx.forbidden('model call'):
             self.assertEqual(routing.select(' ').status,'invalid_request')
-            for failure,status in ((FileNotFoundError(),'provider_error'),(ValueError(),'routing_error'),(subprocess.TimeoutExpired('codex',10),'provider_error')):
-                with patch.object(p,'probe_cli',side_effect=failure): self.assertEqual(routing.select('request').status,status)
+            with patch.dict(os.environ,{'NATTA_SYSTEM_ONE_BACKEND':'codex'}):
+                result=routing.select('request')
+            self.assertEqual((result.status,result.error),('routing_error','provider_configuration_invalid'))
+            with patch.object(catalog,'definitions',side_effect=ValueError('PRIVATE')):
+                result=routing.select('request')
+            self.assertEqual((result.status,result.error),('routing_error','definitions_invalid'))
 
     def test_no_evaluation_dependency_or_dispatch_and_frozen_definition_parity(self):
-        for name in ('routing.py','router_codex.py'):
+        for name in ('routing.py','semantic_catalog.py','system_one.py'):
             for node in ast.walk(ast.parse((natta.ROOT/name).read_text())):
-                if isinstance(node,ast.Import): self.assertFalse(any(n.name in ('evaluate','evaluate_codex','local_model','execution','adapters','natta') for n in node.names))
-                elif isinstance(node,ast.ImportFrom): self.assertNotIn(node.module,('evaluate_codex','execution','adapters','natta'))
-        self.assertEqual(p.DEFINITIONS.read_bytes(),(natta.ROOT.parent/'natta-local-model/evaluation/descriptions.json').read_bytes())
+                if isinstance(node,ast.Import): self.assertFalse(any(n.name in ('evaluate','local_model','execution','adapters','natta','subprocess','semantic_execution') for n in node.names))
+                elif isinstance(node,ast.ImportFrom): self.assertNotIn(node.module,('execution','adapters','natta','subprocess'))
+        self.assertEqual(catalog.DEFINITIONS.read_bytes(),(natta.ROOT.parent/'natta-local-model/evaluation/descriptions.json').read_bytes())
         with self.assertRaises(FrozenInstanceError): routing.RouteResult('matched','build').executed=True
 
 
 class RouterDoctorTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.path=Path(self.tmp.name).resolve()/'router'
-        mock=patch.object(p,'workspace_path',return_value=self.path); mock.start(); self.addCleanup(mock.stop)
-
-    def test_read_only_missing_valid_stale_unsafe_workspace(self):
-        with patch.object(p,'probe_cli',return_value='mock') as probe,patch.object(routing.shutil,'which',return_value='/fixture/codex'),patch.object(p,'run_provider',side_effect=AssertionError('model call')):
-            self.assertTrue(all(ok for ok,_ in routing.doctor_checks())); self.assertFalse(self.path.exists())
-            p.generate(self.path,'concise',p.TOOLKIT_IDS); before={f:f.read_bytes() for f in self.path.iterdir()}
-            self.assertTrue(all(ok for ok,_ in routing.doctor_checks())); self.assertEqual(before,{f:f.read_bytes() for f in before})
-            (self.path/'AGENTS.md').write_text('stale')
-            self.assertTrue(any('stale' in label for _,label in routing.doctor_checks())); self.assertEqual((self.path/'AGENTS.md').read_text(),'stale')
-            (self.path/'extra').write_text('keep')
-            self.assertTrue(any(not ok and 'unsafe' in label for ok,label in routing.doctor_checks())); self.assertTrue((self.path/'extra').exists())
-            self.assertEqual(probe.call_count,4)
-
-    def test_missing_cli_invalid_definitions_and_compatibility(self):
-        with patch.object(routing.shutil,'which',return_value=None),patch.object(p,'probe_cli',side_effect=AssertionError('probe')):
-            self.assertIn((False,'Semantic router Codex CLI missing'),routing.doctor_checks())
-        with patch.object(p,'definitions',side_effect=ValueError('PRIVATE')): self.assertEqual(routing.doctor_checks(),[(False,'Semantic router definitions invalid')])
-        with patch.object(p,'probe_cli',side_effect=ValueError()),patch.object(routing.shutil,'which',return_value='codex'):
-            self.assertTrue(any(not ok and 'compatibility' in label for ok,label in routing.doctor_checks()))
+    def test_definitions_and_provider_rows_without_inference(self):
+        with s1fx.forbidden('model call'), patch.object(system_one.urllib.request,'urlopen',side_effect=AssertionError('network')), \
+             patch.dict(os.environ,{'TYPESAFE_API_KEY':'sk-secret'}):
+            rows=routing.doctor_checks()
+        self.assertTrue(all(ok for ok,_ in rows))
+        self.assertEqual(rows[0][1],'Semantic definitions valid: 11 routing options, 8 planner capabilities')
+        self.assertNotIn('sk-secret',json.dumps(rows))
+        with patch.object(catalog,'definitions',side_effect=ValueError('PRIVATE')):
+            self.assertEqual(routing.doctor_checks()[0],(False,'Semantic definitions invalid'))
 
     def test_doctor_no_provider_call_optional_core_health(self):
         out=io.StringIO()
-        with patch.object(p,'probe_cli',return_value='mock'),patch.object(natta.local_model,'doctor_checks',return_value=[]), \
+        with s1fx.forbidden('model call'),patch.object(natta.local_model,'doctor_checks',return_value=[]), \
              patch.object(natta.shutil,'which',side_effect=lambda name:str(natta.WORKSPACE_ROOT/'bin/natta') if name=='natta' else '/fixture/tool'), \
-             patch.object(p,'run_provider',side_effect=AssertionError('model call')),contextlib.redirect_stdout(out): self.assertEqual(natta.doctor([]),0)
-        self.assertIn('Semantic router CLI supports isolation',out.getvalue()); self.assertFalse(self.path.exists())
+             contextlib.redirect_stdout(out): self.assertEqual(natta.doctor([]),0)
+        self.assertIn('OK  System One: backend=jev model=jev-latest min_confidence=0.50 (optional)',out.getvalue())
+        self.assertIn('UNAVAILABLE  TypeSafe API key missing in TYPESAFE_API_KEY; service/auth not probed (optional)',out.getvalue())
+        self.assertIn('Core Natta: ready',out.getvalue())
         with patch.object(routing,'doctor_checks',return_value=[(False,'Semantic router unavailable')]),patch.object(natta.local_model,'doctor_checks',return_value=[]), \
              patch.object(natta.shutil,'which',side_effect=lambda name:str(natta.WORKSPACE_ROOT/'bin/natta') if name=='natta' else '/fixture/tool'),contextlib.redirect_stdout(out): self.assertEqual(natta.doctor([]),0)
         self.assertIn('UNAVAILABLE  Semantic router unavailable',out.getvalue())
-
-    def test_shared_cli_probe_flags_features_timeout(self):
-        help_text='--output-schema --json --ephemeral --ignore-user-config --ignore-rules --skip-git-repo-check --strict-config --sandbox'
-        results=[SimpleNamespace(stdout='codex-cli 0.160.0'),SimpleNamespace(stdout=help_text),SimpleNamespace(stdout='\n'.join((*p.DISABLED,'skip_host_skill_discovery')))]
-        with patch.object(p.subprocess,'run',side_effect=results) as run: self.assertEqual(p.probe_cli(self.path),'codex-cli 0.160.0')
-        self.assertEqual([c.args[0] for c in run.call_args_list],[['codex','--version'],['codex','exec','--help'],['codex','features','list']])
-        self.assertTrue(all(c.kwargs['timeout']==10 and c.kwargs['cwd']==self.path for c in run.call_args_list))
-        for broken in ([results[0],SimpleNamespace(stdout='old')],[*results[:2],SimpleNamespace(stdout='shell_tool')]):
-            with patch.object(p.subprocess,'run',side_effect=broken),self.assertRaises(ValueError): p.probe_cli(self.path)
 
 
 if __name__=='__main__': unittest.main()

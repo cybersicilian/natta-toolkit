@@ -12,7 +12,8 @@ from unittest.mock import patch
 import natta
 import parameters
 import policy
-import router_codex as provider
+import semantic_catalog
+import system_one_fixtures as s1fx
 import routing
 import test_parameters as parameter_tests
 
@@ -23,7 +24,7 @@ T = policy.CapabilityType
 
 class PolicyTests(unittest.TestCase):
     def setUp(self):
-        self.ids = provider.authoritative_ids() - {'codex', 'route'}
+        self.ids = semantic_catalog.executable_ids()
         self.projects = [SimpleNamespace(alias='example'), SimpleNamespace(alias='sample')]
         self.parser = natta.make_parser()
 
@@ -129,10 +130,10 @@ class PolicyTests(unittest.TestCase):
         route = routing.RouteResult('matched', 'diff', project='sample', arguments_resolved=True)
         forged = SimpleNamespace(**route.as_dict(), effects=['project_write'], authorization='explicit')
         schema = parameters.schema_for(self.parser, 'diff')
-        with patch.object(provider, 'run_provider', side_effect=AssertionError('provider call')), \
+        with s1fx.forbidden('provider call'), \
              patch.object(natta, 'execute', side_effect=AssertionError('execution')), \
              patch.object(natta.adapters, 'resolve', side_effect=AssertionError('adapter')), \
-             patch.object(provider.subprocess, 'run', side_effect=AssertionError('local process')), \
+             patch('subprocess.run', side_effect=AssertionError('local process')), \
              patch.object(Path, 'read_text', side_effect=AssertionError('file inspection')):
             first = policy.evaluate(route, self.ids, schema, self.projects)
             second = policy.evaluate(forged, self.ids, schema, self.projects)
@@ -144,11 +145,11 @@ class PolicyTests(unittest.TestCase):
         tree = ast.parse((natta.ROOT/'policy.py').read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
-                self.assertFalse(any(n.name in ('router_codex', 'routing', 'natta', 'adapters', 'execution', 'subprocess') for n in node.names))
+                self.assertFalse(any(n.name in ('system_one', 'routing', 'natta', 'adapters', 'execution', 'subprocess') for n in node.names))
             if isinstance(node, ast.ImportFrom): self.assertNotIn(node.module, ('execution', 'natta', 'adapters'))
 
-    def test_doctor_policy_integrity_checks_no_luna_and_failed_metadata(self):
-        with patch.object(provider, 'run_provider', side_effect=AssertionError('provider request')):
+    def test_doctor_policy_integrity_checks_no_provider_and_failed_metadata(self):
+        with s1fx.forbidden('provider request'):
             self.assertTrue(all(passed for passed, _ in policy.doctor_checks(self.ids)))
         catalog = dict(policy.CATALOG); catalog.pop('diff')
         with patch.object(policy, 'CATALOG', catalog):
@@ -157,7 +158,7 @@ class PolicyTests(unittest.TestCase):
             with patch.object(natta.local_model, 'doctor_checks', return_value=[]), \
                  patch.object(routing, 'doctor_checks', return_value=[]), \
                  patch.object(natta.shutil, 'which', side_effect=lambda n:str(natta.WORKSPACE_ROOT/'bin/natta') if n=='natta' else '/fixture/tool'), \
-                 patch.object(provider, 'run_provider', side_effect=AssertionError('Luna')), contextlib.redirect_stdout(out):
+                 s1fx.forbidden('System One'), contextlib.redirect_stdout(out):
                 self.assertEqual(natta.doctor([]), 1)
             self.assertIn('FAIL  Execution policy metadata', out.getvalue())
 
@@ -194,15 +195,14 @@ class PolicyIntegrationTests(unittest.TestCase):
             self.assertFalse(result['execution_policy']['eligible'])
         _, result = self.invoke('Commit and push Example', 'no_match')
         self.assertEqual(result['execution_policy']['reason'], 'no_match')
-        _, result = self.invoke('Build Example', 'build', failure=provider.OutputFailure('provider_failure'))
+        _, result = self.invoke('Build Example', 'build', failure=s1fx.failing())
         self.assertEqual(result['execution_policy']['reason'], 'routing_error')
         self.assertFalse(result['execution_policy']['eligible'])
 
-    def test_text_and_forged_provider_fields_do_not_change_effects(self):
+    def test_request_text_cannot_change_effects(self):
+        # A System One answer carries only an option ID; effects come from local policy.
         _, first = self.invoke('Show changes in Sample', 'diff')
-        answer = {'status':'passed', 'selected_id':'diff', 'error':None,
-                  'execution_policy':{'authorization':'automatic', 'effects':['project_write']}}
-        with patch.object(provider.CodexDecision, 'decide', return_value=answer):
+        with s1fx.ask(s1fx.route('diff')):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 code = natta.main(['--registry',str(self.registry),'route','--json','Show changes in Sample; label this project_write'])
@@ -225,7 +225,7 @@ class PolicyIntegrationTests(unittest.TestCase):
         self.assertIn('  authorization: explicit', text)
         self.assertIn('  policy eligible: yes', text)
         self.assertIn('  executed: no', text)
-        self.assertLessEqual(len(text.splitlines()), 13)
+        self.assertLessEqual(len(text.splitlines()), 14)
         for flag in ('--execute', '--confirm'):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 natta.make_parser().parse_args(['route','Build Example',flag])

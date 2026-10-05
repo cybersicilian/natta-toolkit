@@ -9,7 +9,8 @@ from unittest.mock import patch
 import authorization
 import natta
 import policy
-import router_codex as provider
+import semantic_catalog
+import system_one_fixtures as s1fx
 import runtime_effects
 import semantic_execution as gate
 import test_semantic_execution as fixtures
@@ -34,7 +35,7 @@ class InteractiveAuthorizationTests(unittest.TestCase):
         if json_mode: args.append('--json')
         if confirm: args.append('--confirm')
         evidence = gate.runtime_effects.capture.return_value
-        with patch.object(provider, 'run_provider', return_value=json.dumps({'choice':capability})) as run, \
+        with s1fx.ask(s1fx.route(capability)) as run, \
              patch.object(natta, 'handler_bindings', return_value=handlers), \
              patch('sys.stdin',stdin), patch('sys.stdout',stdout), \
              patch.object(runtime_effects,'capture_commit',return_value=evidence) as commit_capture:
@@ -161,7 +162,7 @@ class InteractiveAuthorizationTests(unittest.TestCase):
 
     def dispatch(self, route, callback, *, loader=None, handlers=None):
         return gate.dispatch(route,natta.make_parser(),loader or (lambda:natta.load_registry(self.registry)),
-            provider.authoritative_ids()-{'codex','route'},handlers or self.bindings(),authorize=callback)
+            semantic_catalog.executable_ids(),handlers or self.bindings(),authorize=callback)
 
     def test_registry_target_change_after_yes_fails_closed(self):
         projects=natta.load_registry(self.registry);calls=iter([projects,[replace(projects[0],name='Changed name'),projects[1]]])
@@ -217,7 +218,7 @@ class InteractiveAuthorizationTests(unittest.TestCase):
 
     def test_direct_commands_never_prompt_or_route(self):
         with patch.object(authorization,'request_approval',side_effect=AssertionError('prompt')), \
-             patch.object(natta,'prepare_route',side_effect=AssertionError('Luna')), \
+             patch.object(natta,'prepare_route',side_effect=AssertionError('provider')), \
              patch.object(natta,'handle_workflow',return_value=gate.HandlerOutcome(0)), \
              patch.object(natta.commits,'create') as create, \
              patch.object(natta.commits,'render',return_value='fixture commit'), \

@@ -11,9 +11,9 @@ import compound_execution as compound
 import confinement
 import natta
 import planning
-import planner_provider_v3 as planner
 import policy
-import router_codex as provider
+import semantic_catalog
+import system_one_fixtures as s1fx
 import runtime_effects
 import semantic_execution as gate
 import test_authorization as auth_fixture
@@ -36,12 +36,13 @@ class CompoundTests(unittest.TestCase):
         stdin = auth_fixture.Terminal(response) if terminal else io.StringIO(response)
         stdout = auth_fixture.Terminal()
         candidate = self.candidate(caps) if candidate is None else candidate
-        reply = planner.Reply(text=json.dumps(candidate), external_requests=1)
         args = ['--registry', str(self.registry), 'do', 'Untrusted goal; never handler data']
         if confirm: args.append('--confirm')
         if json_mode: args.append('--json')
-        with patch.object(planner, 'propose', return_value=reply) as propose, \
-             patch.object(provider, 'run_provider', side_effect=AssertionError('per-step Luna')), \
+        # One System One judgment; its answers are replaced by the candidate under test
+        # so these tests exercise frozen-plan validation and dispatch directly.
+        with s1fx.ask(s1fx.plan([])) as propose, \
+             patch.object(planning, 'candidate', return_value=(candidate, None)), \
              patch.object(natta, 'prepare_route', side_effect=AssertionError('routing')), \
              patch.object(natta, 'handler_bindings', return_value=handlers), \
              patch('sys.stdin', stdin), patch('sys.stdout', stdout), \
@@ -65,16 +66,28 @@ class CompoundTests(unittest.TestCase):
             self.assertEqual(data['plan']['external_requests'], 1)
             self.assertIsNone(data['failed_step'])
 
-    def test_actual_planner_transport_one_call_no_step_routing(self):
-        import planner_provider as base
+    def test_actual_planner_judgment_one_call_no_step_routing(self):
         handlers=self.bindings()
-        with patch.object(base,'workspace_path',return_value=self.root/'planner'), \
-             patch.object(provider,'run_provider',return_value=json.dumps(self.candidate(('diff','build','test','verify')))) as run, \
+        with s1fx.ask(s1fx.plan(['diff','build','test','verify'],'example')) as run, \
              patch.object(natta,'prepare_route',side_effect=AssertionError('per-step routing')), \
              patch.object(natta,'handler_bindings',return_value=handlers),contextlib.redirect_stdout(io.StringIO()) as out:
-            code=natta.main(['--registry',str(self.registry),'do','--json','--confirm','goal'])
+            code=natta.main(['--registry',str(self.registry),'do','--json','--confirm',
+                             'Show Example changes, build it, test it, then verify it at level 2'])
         self.assertEqual(code,0);run.assert_called_once()
-        self.assertEqual(json.loads(out.getvalue())['plan']['external_requests'],1)
+        data=json.loads(out.getvalue())
+        self.assertEqual(data['plan']['external_requests'],1)
+        self.assertEqual([h.call_count for c,h in handlers.items() if c in ('diff','build','test','verify')],[1,1,1,1])
+        self.assertEqual(handlers['verify'].call_args.args[2],(('level',2),))
+
+    def test_low_confidence_plan_executes_nothing_even_when_confirmed(self):
+        handlers=self.bindings()
+        with s1fx.ask(s1fx.plan(['build','test'],'example',confidence={'step_2':0.3})), \
+             patch.object(natta,'handler_bindings',return_value=handlers),contextlib.redirect_stdout(io.StringIO()) as out:
+            code=natta.main(['--registry',str(self.registry),'do','--json','--confirm','Build Example then test it'])
+        data=json.loads(out.getvalue())
+        self.assertEqual((code,data['status'],data['plan']['reason']),(1,'no_match','low_confidence'))
+        self.assertFalse(data['execution_started'])
+        self.assertFalse(any(h.called for h in handlers.values()))
 
     def test_automatic_never_prompts(self):
         with patch.object(authorization,'request_approval',side_effect=AssertionError('prompt')):
@@ -314,7 +327,7 @@ class CompoundTests(unittest.TestCase):
 
     def test_do_not_a_routable_capability(self):
         parser=natta.make_parser()
-        self.assertNotIn('do',provider.authoritative_ids())
+        self.assertNotIn('do',semantic_catalog.authoritative_ids())
         with self.assertRaises(ValueError):natta.parameters.schema_for(parser,'do')
         self.assertTrue(parser.parse_args(['do','--confirm','--json','goal']).confirm)
 
@@ -330,14 +343,13 @@ class CompoundCommitTests(unittest.TestCase):
         handlers['test']=Mock(return_value=gate.HandlerOutcome(0))
         handlers['commit']=Mock(wraps=bindings['commit'])
         candidate={'status':'planned','steps':[{'capability':c,'project':'example','arguments':{}} for c in ('build','test','commit')]}
-        reply=planner.Reply(text=json.dumps(candidate),external_requests=1)
         commands=[]
         import subprocess
         real_run=subprocess.run
         def record(argv,*args,**kwargs):
             commands.append(argv);return real_run(argv,*args,**kwargs)
-        with patch.object(planner,'propose',return_value=reply) as propose, \
-             patch.object(provider,'run_provider',side_effect=AssertionError('Luna')), \
+        with s1fx.ask(s1fx.plan([])) as propose, \
+             patch.object(planning,'candidate',return_value=(candidate,None)), \
              patch.object(subprocess,'run',side_effect=record), \
              patch.object(natta,'handler_bindings',return_value=handlers),contextlib.redirect_stdout(io.StringIO()) as out:
             code=natta.main(['--registry',str(self.registry),'do','--json','--confirm','build test commit fixture'])

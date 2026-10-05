@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import routing
+import semantic_catalog
 import parameters
 import policy
 import semantic_execution
@@ -200,11 +201,11 @@ def doctor(projects, *, json_mode=False):
     # Optional runtime inspection is explicit about omissions, without making
     # deterministic core health depend on installation of ML dependencies.
     local_checks = local_model.doctor_checks()
-    routing_checks = [(shutil.which("codex") is not None, "Codex CLI available (optional semantic provider/interface)"),
+    routing_checks = [(shutil.which("codex") is not None, "Codex CLI available (optional `natta codex` terminal handoff)"),
                       *routing.doctor_checks(), *semantic_execution.confinement.doctor_checks(projects),
                       *testflight.doctor_checks(projects)]
-    checks.extend(policy.doctor_checks(routing.provider.authoritative_ids() - {'codex', 'route'}))
-    checks.extend(semantic_execution.doctor_checks(routing.provider.authoritative_ids() - {'codex', 'route'}, handler_bindings(), make_parser()))
+    checks.extend(policy.doctor_checks(semantic_catalog.executable_ids()))
+    checks.extend(semantic_execution.doctor_checks(semantic_catalog.executable_ids(), handler_bindings(), make_parser()))
     for project in projects:
         checks.append((project.path.is_dir(), f"{project.alias}: project directory"))
         for key, file in project.files.items():
@@ -258,7 +259,7 @@ def make_parser():
                         metavar="PATH", help="Project registry TOML (default: ~/.config/natta/projects.toml)")
     commands = parser.add_subparsers(dest="command", required=True, title="commands")
     pages = {
-        "route": ("Propose a capability using Luna; never execute", "Bounded semantic capability selection using gpt-6-luna. Natta validates the result and never executes it. Projects and bounded arguments are resolved locally from the registry and CLI schema. Sends only the request and routing definitions; no repository inspection.", 'natta route "Build Example for the simulator"'),
+        "route": ("Propose a capability using System One; never execute", "Bounded semantic capability selection: one System One Choice judgment (TypeSafe Jev by default, or a configured Ollama model). Natta validates the result, gates it on calibrated confidence and never executes it. Projects and bounded arguments are resolved locally from the registry and CLI schema. Sends only the request and routing definitions; no repository inspection.", 'natta route "Build Example for the simulator"'),
         "codex": ("Launch Codex at the toolkit checkout or a registered project", "Launch the interactive Codex CLI from the toolkit checkout root, or from a registered project's repository when PROJECT is supplied. Uses Codex's normal instruction discovery; no prompt is injected.", "natta codex"),
         "projects": ("List registered projects", "List registered projects with alias, display name, adapter type, and repository path.", "natta projects"),
         "status": ("Inspect project and Git status", "Deterministic, read-only inspection of branch, working-tree status, version/build, latest commit, and canonical document paths.", "natta status example"),
@@ -330,9 +331,9 @@ Examples:
     sub.add_argument('goal', metavar='GOAL')
     sub.add_argument('--json', action='store_true', help='Print the structured compound result')
     sub.add_argument('--confirm', action='store_true', help='Authorize the complete validated plan for this invocation')
-    sub = commands.add_parser('confinement', help='Validate native confinement without Luna')
+    sub = commands.add_parser('confinement', help='Validate native confinement without a semantic provider')
     actions = sub.add_subparsers(dest='confinement_action', required=True)
-    validate = actions.add_parser('validate', help='Disposable inspection confinement probes; no Luna or app workflows')
+    validate = actions.add_parser('validate', help='Disposable inspection confinement probes; no semantic provider or app workflows')
     return parser
 
 
@@ -347,7 +348,7 @@ def prepare_route(request, parser, registry, *, selector=None):
             result = replace(result, **asdict(resolution))
         except (NattaError, OSError, ValueError):
             result = routing.RouteResult("routing_error", None, "parameter_configuration_invalid")
-    capability_ids = routing.provider.authoritative_ids() - {'codex', 'route'}
+    capability_ids = semantic_catalog.executable_ids()
     try:
         policy.validate_catalog(capability_ids)
     except (ValueError, TypeError):
@@ -493,7 +494,7 @@ def main(argv=None):
                 return 0 if result.status in ('matched', 'no_match') else 1
             result = semantic_execution.dispatch(
                 result, parser, lambda: load_registry(args.registry),
-                routing.provider.authoritative_ids() - {'codex', 'route'},
+                semantic_catalog.executable_ids(),
                 handler_bindings(), confirm=args.confirm,
                 authorize=None if args.json else authorize_resolved)
             print(json.dumps(result.as_dict(), sort_keys=True) if args.json else semantic_execution.render_result(result))
@@ -512,7 +513,7 @@ def main(argv=None):
                 result = testflight.execute(projects, project, check=True)
                 print(json.dumps(result.as_dict(), sort_keys=True) if args.json else testflight.render(result, project))
                 return result.exit_code
-            ids = routing.provider.authoritative_ids() - {'codex', 'route'}
+            ids = semantic_catalog.executable_ids()
             route = routing.RouteResult('matched', 'testflight', project=project.alias, arguments_resolved=True)
             route = replace(route, execution_policy=policy.evaluate(route, ids,
                 parameters.schema_for(parser, 'testflight'), projects))

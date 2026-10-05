@@ -16,6 +16,7 @@ import natta
 import policy
 import semantic_execution as gate
 import test_semantic_execution as fixtures
+import system_one_fixtures as s1fx
 
 
 class MacOSBackendTests(unittest.TestCase):
@@ -97,14 +98,14 @@ class MacOSBackendTests(unittest.TestCase):
         mac.save_record('inspection',self.fingerprint)
         with patch.object(mac,'fixture_validation',side_effect=ValueError('fixture blocked')), \
              patch.object(mac,'candidate_run',side_effect=AssertionError('handler')), \
-             patch.object(gate.routing.provider,'run_provider',side_effect=AssertionError('provider')):
+             s1fx.forbidden():
             code,result=mac.validate()
         self.assertEqual(code,1);self.assertFalse(mac.validation_state()[0])
         self.assertFalse(result['inspection_validated'])
 
     def test_explicit_validation_records_only_complete_success(self):
         with patch.object(mac,'fixture_validation',return_value=['fixtures']) as fixture, \
-             patch.object(gate.routing.provider,'run_provider',side_effect=AssertionError('provider')):
+             s1fx.forbidden():
             code,result=mac.validate()
         fixture.assert_called_once_with('inspection')
         self.assertEqual(code,0);self.assertTrue(mac.validation_state()[0])
@@ -127,7 +128,7 @@ class MacOSBackendTests(unittest.TestCase):
             with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
                 natta.make_parser().parse_args(['confinement','validate',*extra])
         with patch.object(mac,'validate',return_value=(0,{'status':'validated'})) as validate, \
-             patch.object(gate.routing.provider,'run_provider',side_effect=AssertionError('provider')),contextlib.redirect_stdout(io.StringIO()):
+             s1fx.forbidden(),contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(natta.main(['confinement','validate']),0)
             validate.assert_called_once_with()
         with patch.object(mac,'validation_state',return_value=(True,None)) as state, \

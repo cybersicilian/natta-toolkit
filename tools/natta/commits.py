@@ -45,7 +45,7 @@ def message_for(project, message=None):
 
 def git(project, *args):
     # Do not inherit GIT_DIR, GIT_INDEX_FILE, GIT_WORK_TREE, injected config or author
-    # overrides. Identity is supplied by ordinary Git configuration, never Luna.
+    # overrides. Identity is supplied by ordinary Git configuration, never a model.
     env={k:v for k,v in os.environ.items() if not k.startswith('GIT_')}
     env.update(GIT_OPTIONAL_LOCKS='0',GIT_TERMINAL_PROMPT='0',GIT_PAGER='cat')
     argv=('git','--no-optional-locks','--no-pager','-c','core.hooksPath=/dev/null',

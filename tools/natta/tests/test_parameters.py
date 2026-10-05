@@ -13,7 +13,8 @@ from unittest.mock import patch
 import natta
 import parameters
 import routing
-import router_codex as provider
+import semantic_catalog as catalog
+import system_one_fixtures as s1fx
 
 
 def project(alias, aliases=(), name=None):
@@ -31,7 +32,7 @@ class ParameterTests(unittest.TestCase):
                                   parameters.schema_for(self.parser, capability))
 
     def test_requirements_come_from_real_cli(self):
-        for capability in provider.ROUTING_IDS[:-1]:
+        for capability in catalog.ROUTING_IDS[:-1]:
             schema = parameters.schema_for(self.parser, capability)
             self.assertEqual(schema.project_required, capability not in ('projects', 'doctor'))
             self.assertEqual(schema.level_choices, (1, 2, 3) if capability == 'verify' else ())
@@ -133,7 +134,7 @@ class ParameterTests(unittest.TestCase):
             self.assertEqual(result.missing_arguments, ())
 
     def test_resolver_has_no_provider_execution_or_filesystem_access(self):
-        with patch.object(provider, 'run_provider', side_effect=AssertionError('provider call')), \
+        with s1fx.forbidden('provider call'), \
              patch.object(natta, 'execute', side_effect=AssertionError('execution')), \
              patch.object(Path, 'read_text', side_effect=AssertionError('filesystem')):
             result = self.resolve('verify', 'Verify Sample at level 2')
@@ -168,16 +169,12 @@ name = "Sample App"
 path = "missing-sample"
 type = "generic-git"
 ''')
-        mock = patch.object(provider, 'workspace_path', return_value=self.root/'router')
-        mock.start(); self.addCleanup(mock.stop)
-        mock = patch.object(provider, 'probe_cli', return_value='mock')
-        mock.start(); self.addCleanup(mock.stop)
 
     def invoke(self, request, choice, json_mode=True, failure=None):
         out, err = io.StringIO(), io.StringIO()
         args = ['--registry', str(self.registry), 'route', request]
         if json_mode: args.append('--json')
-        with patch.object(provider, 'run_provider', return_value=json.dumps({'choice': choice}), side_effect=failure) as run, \
+        with s1fx.ask(failure or s1fx.route(choice)) as run, \
              patch.object(natta.adapters, 'resolve', side_effect=AssertionError('build/verify handler')), \
              patch.object(natta, 'execute', side_effect=AssertionError('execution')), \
              patch.object(natta, 'git_state', side_effect=AssertionError('app inspection')), \
@@ -198,9 +195,11 @@ type = "generic-git"
             self.assertEqual(code, 0)
             decision = result.pop('execution_policy')
             self.assertTrue(decision['eligible'])
+            self.assertEqual(set(result.pop('probabilities')), set(catalog.TOOLKIT_IDS))
             self.assertEqual(result, {'status':'matched','capability':cap,'project':expected_project,
                 'arguments':args,'arguments_resolved':True,'missing_arguments':[],
-                'resolution_error':None,'provider':'gpt-6-luna','executed':False,'error':None})
+                'resolution_error':None,'provider':'system-one','backend':'jev','model':'jev-latest',
+                'min_confidence':0.5,'confidence':0.95,'reason':None,'executed':False,'error':None})
         self.assertFalse((self.root/'missing-example').exists())
         self.assertFalse((self.root/'missing-sample').exists())
 
@@ -225,7 +224,7 @@ type = "generic-git"
              patch.object(parameters, 'schema_for', side_effect=AssertionError('schema')), \
              patch.object(natta, 'load_registry', side_effect=AssertionError('registry')):
             for choice, failure, status in [('no_match', None, 'no_match'),
-                ('unknown', None, 'provider_error'), ('build', provider.OutputFailure('provider_failure'), 'provider_error')]:
+                ('unknown', None, 'provider_error'), ('build', s1fx.failing(), 'provider_error')]:
                 code, result = self.invoke('Commit and push Example', choice, failure=failure)
                 self.assertEqual(code, 0 if status == 'no_match' else 1)
                 self.assertEqual(result['status'], status)

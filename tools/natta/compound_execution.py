@@ -5,6 +5,7 @@ import authorization
 import planning
 import policy
 import routing
+import semantic_catalog
 import semantic_execution as gate
 from execution import bounded_text
 
@@ -102,7 +103,7 @@ def run(goal, parser, load_projects, bindings, *, confirm=False, json_mode=False
     if (not checked.valid or checked.steps != plan.steps or
             checked.authorization != plan.authorization or checked.effects != plan.effects):
         return denied('invalid_plan', 'frozen_plan_invalid')
-    ids = routing.provider.authoritative_ids() - {'codex', 'route'}
+    ids = semantic_catalog.executable_ids()
     routes = tuple(route_for(s) for s in plan.steps)
     targets = []
     for step, route in zip(plan.steps, routes):

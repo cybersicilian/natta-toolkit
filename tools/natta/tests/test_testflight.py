@@ -14,9 +14,9 @@ import authorization
 import compound_execution
 import natta
 import planning
-import planner_provider_v3 as planner
 import policy
-import router_codex as provider
+import semantic_catalog
+import system_one_fixtures as s1fx
 import runtime_effects
 import semantic_execution as gate
 import testflight as tf
@@ -81,7 +81,7 @@ test_targets=["ExampleTests"]
         source=terminal_fixture.Terminal(response) if tty else io.StringIO(response)
         out=terminal_fixture.Terminal()
         with patch('sys.stdin',source),patch('sys.stdout',out), \
-             patch.object(provider,'run_provider',side_effect=AssertionError('Luna')):
+             s1fx.forbidden():
             code=natta.main(['--registry',str(self.registry),'testflight',*args])
         return code,out.getvalue(),source
 
@@ -306,7 +306,7 @@ test_targets=["ExampleTests"]
         self.assertTrue({policy.Effect.NETWORK,policy.Effect.EXTERNAL_SERVICE_MUTATION}<=decision.effects)
         self.assertFalse(decision.effects & {policy.Effect.PROJECT_WRITE,policy.Effect.GIT_INDEX_WRITE,policy.Effect.GIT_COMMIT,policy.Effect.GIT_PUSH})
         catalog=dict(policy.CATALOG);catalog['build']=replace(catalog['build'],effects=decision.effects)
-        with self.assertRaises(ValueError):policy.validate_catalog(provider.authoritative_ids()-{'codex','route'},catalog)
+        with self.assertRaises(ValueError):policy.validate_catalog(semantic_catalog.executable_ids(),catalog)
 
     def test_missing_authentication_fails_before_archive(self):
         with patch.object(tf,'authentication',side_effect=tf.PrerequisiteError('xcode_account_or_api_key_required')):
@@ -405,17 +405,18 @@ class TestFlightSemanticTests(unittest.TestCase):
         if json_mode:args.append('--json')
         if confirm:args.append('--confirm')
         source=terminal_fixture.Terminal(response);out=terminal_fixture.Terminal()
-        choice='testflight'
-        reply=planner.Reply(json.dumps(candidate or {'status':'planned','steps':[{'capability':'testflight','project':'example','arguments':{}}]}),external_requests=1)
-        with patch.object(provider,'run_provider',return_value=json.dumps({'choice':choice})) as route_call, \
-             patch.object(planner,'propose',return_value=reply) as planner_call, \
+        candidate=candidate or {'status':'planned','steps':[{'capability':'testflight','project':'example','arguments':{}}]}
+        planned=command in ('plan','do')
+        with s1fx.ask(s1fx.plan([]) if planned else s1fx.route('testflight')) as judgment, \
+             patch.object(planning,'candidate',return_value=(candidate,None)) as planner_call, \
              patch.object(natta,'handler_bindings',return_value=handlers), \
              patch('sys.stdin',source),patch('sys.stdout',out), \
              patch.object(runtime_effects,'capture_commit',return_value=runtime_effects.capture.return_value), \
              patch.object(tf,'execute',side_effect=AssertionError('real Apple workflow')):
             code=natta.main(args)
-        if command in ('plan','do'):planner_call.assert_called_once();route_call.assert_not_called()
-        else:route_call.assert_called_once();planner_call.assert_not_called()
+        judgment.assert_called_once()
+        if planned:planner_call.assert_called_once()
+        else:planner_call.assert_not_called()
         return code,json.loads(out.getvalue()) if json_mode else out.getvalue(),handlers
 
     def test_route_selection_nonexecuting_and_explicit_policy(self):
@@ -474,49 +475,12 @@ class TestFlightSemanticTests(unittest.TestCase):
             self.assertEqual(code,1);self.assertEqual(data['status'],'invalid_plan')
             self.assertFalse(any(h.called for h in handlers.values()))
 
-    def test_historical_provider_inputs_preserved(self):
-        import planner_provider_v2 as previous
-        import planner_evaluation
-        import commit_evaluation
-        projects=natta.load_registry(self.registry)
-        planner_evaluation.load_controls(projects)
-        commit_evaluation.controls('planner',projects)
-        self.assertNotIn('testflight',previous.ALLOWED);self.assertNotIn('testflight',provider.PRODUCTION_IDS)
-        self.assertNotIn('testflight',provider.definitions()['concise'])
-        self.assertIn('testflight',provider.toolkit_definitions()['concise'])
+    def test_historical_definition_domains_preserved(self):
+        self.assertNotIn('testflight',semantic_catalog.PRODUCTION_IDS)
+        self.assertNotIn('testflight',semantic_catalog.definitions()['concise'])
+        self.assertIn('testflight',semantic_catalog.toolkit_definitions()['concise'])
+        self.assertIn('testflight',planning.ALLOWED)
+        self.assertIn(semantic_catalog.testflight_extension()['policy'],planning.questions(natta.load_registry(self.registry))['scope'].instructions)
 
 
-class TestFlightEvaluationTests(unittest.TestCase):
-    def setUp(self):
-        import test_parameters
-        test_parameters.ParameterIntegrationTests.setUp(self)
-
-    def test_frozen_suites_counted_mocked_and_nonexecuting(self):
-        import testflight_evaluation as evaluation
-        projects=natta.load_registry(self.registry)
-        for mode,count in (('routing',12),('planner',16)):
-            corpus,control,_=evaluation.controls(mode,projects)
-            self.assertEqual(len(corpus['cases']),count)
-            self.assertEqual(control['predeclared_acceptance']['minimum_exact_accuracy'],1.0)
-            with patch.object(provider,'run_provider',side_effect=AssertionError('Luna')):
-                with self.assertRaises(ValueError):evaluation.run(mode,count-1,self.root/'refused.json',self.registry)
-            replies=([json.dumps({'choice':case['expected']['capability']}) for case in corpus['cases']]
-                if mode=='routing' else [planner.Reply(json.dumps(case['expected']),external_requests=1) for case in corpus['cases']])
-            with patch.object(provider,'run_provider',side_effect=replies) as runner, \
-                 patch.object(planner,'propose',side_effect=replies) as proposed, \
-                 patch.object(tf,'execute',side_effect=AssertionError('Apple workflow')), \
-                 patch.object(runtime_effects,'capture',side_effect=AssertionError('snapshot')):
-                artifact=evaluation.run(mode,count,self.root/(mode+'.json'),self.registry)
-            self.assertTrue(artifact['assessment']['passed']);self.assertFalse(artifact['executed'])
-            self.assertEqual(artifact['actual_external_requests'],count)
-            self.assertEqual(runner.call_count if mode=='routing' else proposed.call_count,count)
-            with patch.object(provider,'run_provider',side_effect=AssertionError('Luna')):
-                with self.assertRaises(FileExistsError):evaluation.run(mode,count,self.root/(mode+'.json'),self.registry)
-
-    def test_frozen_control_tampering_and_provider_failure_refuse_or_fail(self):
-        import testflight_evaluation as evaluation
-        with patch.object(planner,'POLICY','changed'),patch.object(planner,'propose',side_effect=AssertionError('provider')):
-            with self.assertRaises(ValueError):evaluation.run('planner',16,self.root/'tampered.json',self.registry)
-        with patch.object(planner,'propose',return_value=planner.Reply(error='provider_failure',external_requests=1)):
-            artifact=evaluation.run('planner',16,self.root/'failure.json',self.registry)
-        self.assertFalse(artifact['assessment']['passed']);self.assertEqual(artifact['metrics']['provider_failures'],16)
+if __name__=='__main__':unittest.main()

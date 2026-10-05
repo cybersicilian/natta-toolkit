@@ -28,7 +28,7 @@ dist/
 .cache/
 models/
 # Evaluation results are explicit local artifacts, not public fixtures.
-tools/natta/evaluation/*luna*.json
+tools/natta/evaluation/*system-one*.json
 tools/natta/evaluation/*host*.json
 tools/natta-local-model/evaluation/baseline-*.json
 tools/natta-local-model/evaluation/pilot-*.json

@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 import natta
+import system_one_fixtures as s1fx
 
 
 class HarnessTests(unittest.TestCase):
@@ -198,8 +199,7 @@ type = "{kind}"
                 self.invoke('plan', 'Inspect app', '--json')
 
     def test_json_provider_unavailable(self):
-        provider = natta.routing.provider
-        with patch.object(provider, 'generate'), patch.object(provider, 'probe_cli', side_effect=FileNotFoundError):
+        with s1fx.ask(s1fx.failing('unreachable')):
             for command in ('route', 'execute'):
                 code, out, err = self.invoke(command, 'Inspect app', '--json')
                 self.assertEqual((code, err), (1, ''))

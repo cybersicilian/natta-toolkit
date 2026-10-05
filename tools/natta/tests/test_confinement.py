@@ -10,6 +10,7 @@ import natta
 import policy
 import semantic_execution as gate
 import test_semantic_execution as fixtures
+import system_one_fixtures as s1fx
 
 
 class ConfinementTests(unittest.TestCase):
@@ -50,7 +51,7 @@ class ConfinementTests(unittest.TestCase):
 
     def test_doctor_does_not_probe_native_sandbox_or_provider(self):
         import macos_confinement as mac
-        with patch.object(gate.routing.provider,'run_provider',side_effect=AssertionError('provider')), \
+        with s1fx.forbidden(), \
              patch.object(mac,'validation_state',return_value=(False,'validation_missing')), \
              patch.object(mac,'fixture_validation',side_effect=AssertionError('fixture')):
             self.assertTrue(any(not valid for valid,_ in c.doctor_checks()))

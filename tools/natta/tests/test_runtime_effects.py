@@ -15,6 +15,7 @@ import policy
 import runtime_effects as effects
 import semantic_execution as gate
 import test_semantic_execution as fixtures
+import system_one_fixtures as s1fx
 
 
 class ProtectedSnapshotTests(unittest.TestCase):
@@ -204,7 +205,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_route_and_doctor_never_snapshot_and_comparison_no_provider(self):
         import test_parameters
         with patch.object(effects,'capture',side_effect=AssertionError('snapshot')), \
-             patch.object(natta.routing.provider,'run_provider',side_effect=AssertionError('provider')):
+             s1fx.forbidden():
             self.assertTrue(effects.doctor_checks()[0][0])
             self.assertTrue(effects.compare(self.evidence(),self.evidence(),()).passed)
         with patch.object(effects,'capture',side_effect=AssertionError('snapshot')):
@@ -224,7 +225,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
     def test_doctor_rejects_untyped_mapping_without_snapshot_or_provider(self):
         with patch.object(effects,'VERIFIABLE',frozenset(('project_write','git_index_write','git_commit'))), \
              patch.object(execution,'snapshot',side_effect=AssertionError('snapshot')) as capture, \
-             patch.object(natta.routing.provider,'run_provider',side_effect=AssertionError('provider')):
+             s1fx.forbidden():
             self.assertFalse(effects.doctor_checks()[0][0])
             capture.assert_not_called()
 

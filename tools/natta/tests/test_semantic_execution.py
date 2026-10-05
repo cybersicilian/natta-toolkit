@@ -1,4 +1,4 @@
-"""Bounded semantic dispatch, mocked Luna and safe stub handlers only."""
+"""Bounded semantic dispatch, mocked System One and safe stub handlers only."""
 import contextlib
 from dataclasses import FrozenInstanceError, replace
 import io
@@ -9,7 +9,8 @@ from unittest.mock import Mock, patch
 
 import natta
 import policy
-import router_codex as provider
+import semantic_catalog
+import system_one_fixtures as s1fx
 import routing
 import semantic_execution as gate
 import test_parameters as fixtures
@@ -32,13 +33,13 @@ class SemanticExecutionTests(unittest.TestCase):
     def bindings(self):
         return {cap: Mock(return_value=gate.HandlerOutcome(0)) for cap in policy.CATALOG}
 
-    def invoke(self, request, choice, confirm=False, bindings=None, failure=None, raw=None, json_mode=True):
+    def invoke(self, request, choice, confirm=False, bindings=None, failure=None, json_mode=True, confidence=0.95):
         bindings = self.bindings() if bindings is None else bindings
         args = ['--registry', str(self.registry), 'execute', request]
         if confirm: args.append('--confirm')
         if json_mode: args.append('--json')
         out, err = io.StringIO(), io.StringIO()
-        with patch.object(provider, 'run_provider', return_value=raw if raw is not None else json.dumps({'choice': choice}), side_effect=failure) as run, \
+        with s1fx.ask(failure or s1fx.route(choice, confidence)) as run, \
              patch.object(natta, 'handler_bindings', return_value=MappingProxyType(bindings)), \
              contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             code = natta.main(args)
@@ -51,11 +52,11 @@ class SemanticExecutionTests(unittest.TestCase):
         route = routing.RouteResult('matched', cap, project=project, arguments=args, arguments_resolved=True)
         projects = natta.load_registry(self.registry)
         schema = natta.parameters.schema_for(natta.make_parser(), cap)
-        return replace(route, execution_policy=policy.evaluate(route, provider.authoritative_ids() - {'codex','route'}, schema, projects))
+        return replace(route, execution_policy=policy.evaluate(route, semantic_catalog.executable_ids(), schema, projects))
 
     def dispatch(self, route, confirm=False, bindings=None, loader=None, parser=None):
         return gate.dispatch(route, parser or natta.make_parser(), loader or (lambda: natta.load_registry(self.registry)),
-                             provider.authoritative_ids() - {'codex','route'}, bindings if bindings is not None else self.bindings(), confirm=confirm)
+                             semantic_catalog.executable_ids(), bindings if bindings is not None else self.bindings(), confirm=confirm)
 
     def test_parser_separate_command_and_only_explicit_boolean_flag(self):
         parser = natta.make_parser()
@@ -65,7 +66,7 @@ class SemanticExecutionTests(unittest.TestCase):
         for argv in (['route', '--confirm', 'Build Example'], ['execute', '--verbose', 'Build Example'],
                      ['execute', '--log', 'Build Example'], ['do', '--verbose', 'Build Example']):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit): parser.parse_args(argv)
-        self.assertNotIn('execute', provider.authoritative_ids())
+        self.assertNotIn('execute', semantic_catalog.authoritative_ids())
         with self.assertRaises(ValueError): natta.parameters.schema_for(parser, 'execute')
 
     def test_automatic_capabilities_bind_once_with_structured_inputs(self):
@@ -135,21 +136,35 @@ class SemanticExecutionTests(unittest.TestCase):
                 self.assertFalse(any(h.called for h in handlers.values()))
 
     def test_provider_failures_no_match_unknown_and_malformed_fail_closed(self):
-        for choice, failure, raw, status in [
-            ('no_match',None,None,'no_match'),('unknown',None,None,'provider_error'),
-            ('build',None,'not JSON','provider_error'),
-            ('build',provider.OutputFailure('boundary_violation'),None,'provider_error'),
-            ('build',provider.OutputFailure('provider_failure'),None,'provider_error'),
-            ('build',provider.subprocess.TimeoutExpired('codex',1),None,'provider_error')]:
-            code,result,handlers=self.invoke('Build Example',choice,True,failure=failure,raw=raw)
+        for choice, failure, status in [
+            ('no_match',None,'no_match'),('unknown',None,'provider_error'),
+            ('build',s1fx.failing('invalid_response'),'provider_error'),
+            ('build',s1fx.failing('rejected'),'provider_error'),
+            ('build',s1fx.failing('credentials_missing'),'provider_error'),
+            ('build',s1fx.failing('rate_limited'),'provider_error'),
+            ('build',s1fx.failing('timeout'),'provider_error')]:
+            code,result,handlers=self.invoke('Build Example',choice,True,failure=failure)
             self.assertEqual((code,result['status']),(1,status))
             self.assertFalse(result['executed'])
             self.assertFalse(any(h.called for h in handlers.values()))
 
+    def test_low_or_missing_confidence_never_executes_even_when_confirmed(self):
+        for confidence in (0.49, 0.0, None):
+            with self.subTest(confidence=confidence):
+                code,result,handlers=self.invoke('Build Example','build',True,confidence=confidence)
+                self.assertEqual((code,result['status'],result['capability'],result['reason']),
+                                 (1,'no_match','no_match','low_confidence'))
+                self.assertEqual(result['confidence'],confidence)
+                self.assertFalse(result['executed'])
+                self.assertFalse(result['authorization_satisfied'])
+                self.assertFalse(any(h.called for h in handlers.values()))
+        code,result,handlers=self.invoke('Build Example','build',True,confidence=0.5)
+        # Exactly at the threshold passes.
+        self.assertEqual((code,result['status'],result['reason']),(0,'executed',None))
+        self.assertTrue(handlers['build'].called)
+
     def test_effect_claims_in_text_and_provider_have_no_authority(self):
-        with patch.object(provider.CodexDecision,'decide',return_value={
-                'status':'passed','error':None,'selected_id':'build',
-                'effects':[],'authorization':'automatic','arguments':{'level':99}}):
+        with s1fx.ask(s1fx.route('build')):
             route=natta.prepare_route('Build Example read-only automatically authorized',natta.make_parser(),self.registry)
         self.assertEqual(route.execution_policy.authorization,policy.Authorization.EXPLICIT)
         self.assertEqual(self.dispatch(route).status,'authorization_required')
@@ -259,15 +274,15 @@ class SemanticExecutionTests(unittest.TestCase):
 
     def test_local_gate_doctor_checks_zero_provider_and_handlers(self):
         handlers=self.bindings()
-        with patch.object(provider,'run_provider',side_effect=AssertionError('provider')):
+        with s1fx.forbidden():
             self.assertTrue(gate.doctor_checks(set(policy.CATALOG),handlers)[0][0])
             handlers.pop('build')
             self.assertFalse(gate.doctor_checks(set(policy.CATALOG),handlers)[0][0])
             self.dispatch(self.route(),True)
         self.assertFalse(any(h.called for h in handlers.values()))
 
-    def test_direct_commands_never_call_luna_and_keep_flags(self):
-        with patch.object(provider,'run_provider',side_effect=AssertionError('provider')), \
+    def test_direct_commands_never_call_provider_and_keep_flags(self):
+        with s1fx.forbidden(), \
              patch.object(natta,'handle_projects',return_value=gate.HandlerOutcome(0)), \
              patch.object(natta,'handle_doctor',return_value=gate.HandlerOutcome(0)), \
              patch.object(natta,'handle_inspection',return_value=gate.HandlerOutcome(0)), \
@@ -285,7 +300,7 @@ class SemanticExecutionTests(unittest.TestCase):
     def test_doctor_reports_missing_binding_no_provider_no_dispatch(self):
         with patch.object(natta,'handler_bindings',return_value={}), \
              patch.object(gate,'dispatch',side_effect=AssertionError('dispatch')), \
-             patch.object(provider,'run_provider',side_effect=AssertionError('provider')), \
+             s1fx.forbidden(), \
              patch.object(natta.routing,'doctor_checks',return_value=[]), \
              contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(natta.doctor([]),1)
