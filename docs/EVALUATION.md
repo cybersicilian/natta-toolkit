@@ -7,7 +7,7 @@ The Codex CLI / `gpt-6-luna` provider was replaced by System One judgments
 modules, sterile-workspace protocol, Codex evaluators/diagnostics
 (`commit_evaluation.py`, `testflight_evaluation.py`, `planner_evaluation.py`,
 `evaluate_codex.py`, `diagnose_codex.py`) and their tests were removed. The
-regression suite is now 421 mocked tests with no network access. Removed tests
+regression suite uses mocked responses with no network access. Removed tests
 covered only the Codex transport/evaluators; every execution, authorization,
 confinement, commit and TestFlight safety test was kept, and routing/planning
 tests were rewritten against mocked System One answers, including the
@@ -47,12 +47,15 @@ and are ignored by Git. The corpora are small (8–36 cases) and were written fo
 the old provider, so a threshold chosen from them is a starting point, not a
 guarantee.
 
-The source implementation's user-verified regression baseline is 441 passed,
-0 failed, 0 skipped. The public derivative retains all 447 test methods and all
-architectural safety contracts. No source application is needed by tests. The supplied verified baseline was
-441; static inventories of the current source and derivative both contain exactly
-447 test methods. No test method was added or removed during extraction. The
-source baseline count and current source inventory are reported separately.
+## Historical extraction
+
+Historical record of the v1 extraction (not a current quality claim): the source
+implementation's regression baseline was reported as 441 passed, 0 failed,
+0 skipped, while static inventories of the source and the public derivative each
+contained exactly 447 test methods. No test method was added or removed during
+extraction, and all architectural safety contracts were retained. No source
+application is needed by tests. Later public changes add their own tests; see the
+README for the current suite.
 
 Published evaluation definitions include core planner/commit/TestFlight corpora
 and controls, and local-model selection corpus/descriptions/Phase 4C controls.
